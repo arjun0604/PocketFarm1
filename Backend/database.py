@@ -8,7 +8,7 @@ cursor = conn.cursor()
 # Drop the crops table if it exists
 cursor.execute('DROP TABLE IF EXISTS crops')
 
-# Create the crops table
+# Create the crops table (unchanged from the original)
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS crops (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,26 +41,77 @@ CREATE TABLE IF NOT EXISTS weather_instructions (
 # Drop the watering_schedules table if it exists
 cursor.execute('DROP TABLE IF EXISTS watering_schedules')
 
-# Create the watering_schedules table with user_id
+# Create the watering_schedules table with user_id and crop_id
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS watering_schedules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
-    crop_name TEXT NOT NULL,
-    watering_frequency TEXT NOT NULL,
+    crop_id INTEGER NOT NULL,
     last_watered DATE,
-    next_watering DATE
+    next_watering DATE,
+    watering_frequency TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (crop_id) REFERENCES crops(id) ON DELETE CASCADE
 )
 ''')
+
+# Drop the users table if it exists
+cursor.execute('DROP TABLE IF EXISTS users')
 
 # Create the users table
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_token TEXT NOT NULL,
-    watering_reminder INTEGER DEFAULT 0,
-    last_watered_date TEXT,
-    next_watering_date TEXT
+    device_token TEXT NOT NULL UNIQUE,
+    location_city TEXT,
+    location_latitude REAL,
+    location_longitude REAL,
+    notification_enabled BOOLEAN DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+''')
+
+# Drop the user_crops table if it exists
+cursor.execute('DROP TABLE IF EXISTS user_crops')
+
+# Create the user_crops table to associate users with their crops
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS user_crops (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    crop_id INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (crop_id) REFERENCES crops(id) ON DELETE CASCADE,
+    UNIQUE(user_id, crop_id)
+)
+''')
+
+# Drop the notification_preferences table if it exists
+cursor.execute('DROP TABLE IF EXISTS notification_preferences')
+
+# Create the notification_preferences table
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS notification_preferences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    watering_reminders BOOLEAN DEFAULT 1,
+    weather_alerts BOOLEAN DEFAULT 1,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+)
+''')
+
+# Drop the weather_alerts table if it exists
+cursor.execute('DROP TABLE IF EXISTS weather_alerts')
+
+# Create the weather_alerts table
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS weather_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    alert_type TEXT NOT NULL,
+    alert_message TEXT NOT NULL,
+    alert_date DATE NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 )
 ''')
 

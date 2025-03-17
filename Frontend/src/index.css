@@ -1,0 +1,105 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 100 40% 98%;
+    --foreground: 120 10% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 120 10% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 120 10% 10%;
+
+    --primary: 122 39% 49%;
+    --primary-foreground: 355 100% 100%;
+
+    --secondary: 120 29% 70%;
+    --secondary-foreground: 120 10% 10%;
+
+    --muted: 120 5% 96%;
+    --muted-foreground: 120 5% 40%;
+
+    --accent: 43 100% 50%;
+    --accent-foreground: 120 10% 10%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 120 5% 88%;
+    --input: 120 5% 88%;
+    --ring: 122 39% 49%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 120 10% 7%;
+    --foreground: 0 0% 98%;
+
+    --card: 120 10% 10%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 120 10% 10%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 122 39% 49%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 120 29% 30%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 120 5% 20%;
+    --muted-foreground: 120 5% 65%;
+
+    --accent: 43 100% 50%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 120 5% 25%;
+    --input: 120 5% 25%;
+    --ring: 122 39% 49%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "ss01", "ss02", "cv01", "cv02", "cv03";
+  }
+}
+
+@layer components {
+  .pocketfarm-container {
+    @apply container max-w-5xl mx-auto px-4 py-6;
+  }
+  
+  .pocketfarm-card {
+    @apply bg-white rounded-lg shadow-md border border-pocketfarm-secondary/20 overflow-hidden transition-all hover:shadow-lg;
+  }
+  
+  .pocketfarm-input {
+    @apply w-full px-4 py-2 rounded-md border border-pocketfarm-secondary focus:border-pocketfarm-primary focus:ring-1 focus:ring-pocketfarm-primary outline-none;
+  }
+  
+  .pocketfarm-btn-primary {
+    @apply px-6 py-2 bg-pocketfarm-primary text-white rounded-md font-medium shadow-sm hover:bg-pocketfarm-dark transition-colors;
+  }
+  
+  .pocketfarm-btn-secondary {
+    @apply px-6 py-2 bg-white text-pocketfarm-primary border border-pocketfarm-primary rounded-md font-medium shadow-sm hover:bg-pocketfarm-light transition-colors;
+  }
+  
+  .pocketfarm-btn-accent {
+    @apply px-6 py-2 bg-pocketfarm-accent text-white rounded-md font-medium shadow-sm hover:brightness-95 transition-colors;
+  }
+}

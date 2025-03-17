@@ -104,7 +104,7 @@ def recommend_crops(sunlight, water_needs, avg_temp, avg_humidity, avg_area, cur
     combined_crops = pd.concat([recommended_crops, suitable_crops]).drop_duplicates()
 
     # Limit the total number of crops to 6
-    combined_crops = combined_crops.head(6)
+    combined_crops = combined_crops.head(8)
 
     # Return all recommended crops along with their companion crops and additional details
     return {

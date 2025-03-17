@@ -6,12 +6,15 @@ from flask_socketio import SocketIO
 import time
 import threading
 import os
+from functools import lru_cache
+from flask_cors import CORS  # Import CORS
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
+CORS(app)
 socketio = SocketIO(app)
 
 # Use environment variable for API key
@@ -20,16 +23,34 @@ if not API_KEY:
     raise ValueError("OpenWeatherMap API key is missing. Set OPENWEATHERMAP_API_KEY in .env file.")
 
 def get_weather_data(location):
-    """Fetch weather data from OpenWeatherMap API."""
+    """Fetch weather data from OpenWeatherMap API with fallback for unavailable locations."""
     if not API_KEY:
         return None
 
+    # Step 1: Try the user-provided location
     url = f"http://api.openweathermap.org/data/2.5/weather?q={location}&appid={API_KEY}&units=metric"
     
     try:
         response = requests.get(url)
-        response.raise_for_status()  # Raise an error for bad responses
+        response.raise_for_status()  # Raise an error for bad responses (e.g., 404)
         return response.json()
+    except requests.exceptions.HTTPError as e:
+        if response.status_code == 404:
+            print(f"Location '{location}' not found. Falling back to a broader location.")
+            # Step 2: Fallback to a broader location (e.g., Kochi)
+            fallback_location = "Kochi"  # You can adjust this based on your app's context
+            url = f"http://api.openweathermap.org/data/2.5/weather?q={fallback_location}&appid={API_KEY}&units=metric"
+            try:
+                response = requests.get(url)
+                response.raise_for_status()
+                print(f"Using weather data for fallback location: {fallback_location}")
+                return response.json()
+            except requests.exceptions.RequestException as e2:
+                print(f"Error fetching weather data for fallback location: {e2}")
+                return None
+        else:
+            print(f"Error fetching weather data: {e}")
+            return None
     except requests.exceptions.RequestException as e:
         print(f"Error fetching weather data: {e}")
         return None
@@ -61,6 +82,76 @@ def fetch_weather_alerts():
             socketio.emit('weather_update', weather_data)
         time.sleep(600)  # Check every 10 minutes
 
+@lru_cache(maxsize=1000)
+def cached_geocode(latitude, longitude, service="openweathermap"):
+    """
+    Fetch geocode data from OpenWeatherMap (primary) or Nominatim (fallback).
+    Caches results to avoid hitting API rate limits.
+    """
+    headers = {"User-Agent": "PocketFarm/1.0 (contact: arjunsanthosh11b2@gmail.com)"}
+
+    if service == "openweathermap" and API_KEY:
+        # Use OpenWeatherMap Geocoding API
+        url = f"http://api.openweathermap.org/geo/1.0/reverse?lat={latitude}&lon={longitude}&limit=1&appid={API_KEY}"
+        try:
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            if data and len(data) > 0:
+                return {"source": "openweathermap", "data": data[0]}
+        except requests.exceptions.RequestException as e:
+            print(f"OpenWeatherMap geocoding failed: {e}")
+
+    # Fallback to Nominatim if OpenWeatherMap fails or no API key
+    url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={latitude}&lon={longitude}&zoom=18&addressdetails=1"
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        return {"source": "nominatim", "data": response.json()}
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"Geocoding failed: {e}")
+
+@app.route('/geocode', methods=['POST'])
+def geocode():
+    """
+    Reverse geocode latitude and longitude to get city, state, and country.
+    Uses OpenWeatherMap as primary service with Nominatim fallback.
+    """
+    try:
+        data = request.get_json()
+        latitude = data['latitude']
+        longitude = data['longitude']
+
+        # Fetch geocode data (cached)
+        result = cached_geocode(latitude, longitude, service="openweathermap")
+        source = result["source"]
+        geocode_data = result["data"]
+
+        if source == "openweathermap":
+            # Extract details from OpenWeatherMap response
+            city = geocode_data.get('name', 'Unknown City')
+            state = geocode_data.get('state', 'Unknown State')
+            country = geocode_data.get('country', 'Unknown Country')
+        else:
+            # Extract details from Nominatim response
+            address = geocode_data.get('address', {})
+            city = address.get('city') or address.get('town') or address.get('village') or 'Unknown City'
+            state = address.get('state') or 'Unknown State'
+            country = address.get('country') or 'Unknown Country'
+
+        # Log the result for debugging
+        print(f"Geocoded {latitude}, {longitude} using {source}: {city}, {state}, {country}")
+
+        return jsonify({
+            'city': city,
+            'state': state,
+            'country': country,
+        })
+    except KeyError as e:
+        return jsonify({'error': f"Missing required field: {str(e)}"}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
 @app.route('/response', methods=['POST'])
 def handle_response():
     """Handle user response for watering."""
