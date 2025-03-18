@@ -4,94 +4,140 @@ import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Home, Search, MapPin, LogOut, Bell, ChevronRight, Droplets, CloudRain, Sun, RefreshCw } from 'lucide-react';
+import { Home, Search, MapPin, LogOut, Bell, ChevronRight, Droplets, CloudRain, Sun, RefreshCw, User } from 'lucide-react';
 import { getUserLocation, requestLocationPermission, saveUserLocation, Location } from '@/utils/locationUtils';
 import { getUserCropDetails, Crop } from '@/utils/cropUtils';
 import { toast } from 'sonner';
+import CropCard from '@/components/CropCard';
 
 const Dashboard: React.FC = () => {
   const { user, isAuthenticated, logout } = useAuth();
   const [userLocation, setUserLocation] = useState<Location | null>(null);
   const [userCrops, setUserCrops] = useState<Crop[]>([]);
-  const [weatherInfo, setWeatherInfo] = useState<{ temp: number; condition: string }>({ temp: 0, condition: '' });
+  const [weatherInfo, setWeatherInfo] = useState<{ temp: number; condition: string; icon: string }>({ 
+    temp: 0, 
+    condition: '', 
+    icon: '' 
+  });
   const [isLoadingLocation, setIsLoadingLocation] = useState(false);
 
-  useEffect(() => {
-    // Get user crops
-    const crops = getUserCropDetails();
-    setUserCrops(crops);
-
-    // Mock weather data
-    setWeatherInfo({
-      temp: Math.floor(Math.random() * 15) + 15,
-      condition: ['Sunny', 'Partly Cloudy', 'Cloudy', 'Light Rain'][Math.floor(Math.random() * 4)],
-    });
-
-    // Request notification permission
-    if ('Notification' in window) {
-      Notification.requestPermission();
-    }
-
-    // Mock notification
-    const timer = setTimeout(() => {
-      if (crops.length > 0 && Notification.permission === 'granted') {
-        toast.info(`Watering reminder for ${crops[0].name}`, {
-          description: `${crops[0].name} needs water today! They have ${crops[0].waterNeeds.toLowerCase()} water needs.`,
-        });
-      }
-    }, 5000);
-
-    loadUserLocation();
-
-    return () => clearTimeout(timer);
-  }, []);
-
-  const loadUserLocation = async () => {
-    setIsLoadingLocation(true);
+  // Fetch weather data from the backend
+  const fetchWeatherData = async (location: string) => {
     try {
-      const location = await requestLocationPermission(); // Uses cached location if available
-      setUserLocation(location);
+      const response = await fetch('http://127.0.0.1:5000/weather', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ location }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch weather data');
+      }
+
+      const data = await response.json();
+      setWeatherInfo({
+        temp: data.temp,
+        condition: data.condition,
+        icon: data.icon, // Weather icon code
+      });
     } catch (error) {
-      console.error('[Dashboard] Error getting location:', error);
-      // Use fallback if no location is retrieved
-      const fallbackLocation = {
-        latitude: 0,
-        longitude: 0,
-        city: 'Kochi',
-        state: 'Kerala',
-        country: 'India',
-      };
-      saveUserLocation(fallbackLocation);
-      setUserLocation(fallbackLocation);
-      toast.info('Using default location (Kochi). Some features may be limited.');
-    } finally {
-      setIsLoadingLocation(false);
+      console.error('Error fetching weather data:', error);
+      toast.error('Failed to fetch weather data. Using default weather info.');
     }
   };
 
+  // Function to refresh the user's location
   const refreshLocation = async () => {
     setIsLoadingLocation(true);
-    toast.info('Refreshing your location...');
     try {
       const location = await requestLocationPermission();
       setUserLocation(location);
-      toast.success('Location refreshed successfully');
+
+      // Fetch weather data for the user's location
+      if (location.city) {
+        fetchWeatherData(location.city);
+      }
     } catch (error) {
       console.error('[Dashboard] Error refreshing location:', error);
-      const fallbackLocation = {
-        latitude: 0,
-        longitude: 0,
-        city: 'Kochi',
-        state: 'Kerala',
-        country: 'India',
-      };
-      saveUserLocation(fallbackLocation);
-      setUserLocation(fallbackLocation);
-      toast.info('Using default location (Kochi). Some features may be limited.');
+      toast.error('Failed to refresh location. Using cached location.');
     } finally {
       setIsLoadingLocation(false);
     }
   };
+
+  useEffect(() => {
+    const fetchUserCrops = async () => {
+      try {
+        const response = await fetch('http://127.0.0.1:5000/get_user_crops', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${user?.id}`,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch user crops');
+        }
+
+        const cropNames = await response.json();
+
+        const cropsWithDetails = await Promise.all(
+          cropNames.map(async (cropName: string) => {
+            const cropResponse = await fetch(`http://127.0.0.1:5000/crop/${cropName}`);
+            if (!cropResponse.ok) {
+              throw new Error(`Failed to fetch details for ${cropName}`);
+            }
+            return cropResponse.json();
+          })
+        );
+
+        setUserCrops(cropsWithDetails);
+      } catch (error) {
+        console.error('Error fetching user crops:', error);
+        toast.error('Failed to load your garden crops. Please try again.');
+      }
+    };
+
+    if (isAuthenticated && user?.id) {
+      fetchUserCrops();
+    }
+  }, [isAuthenticated, user]);
+
+  useEffect(() => {
+    const loadUserLocation = async () => {
+      setIsLoadingLocation(true);
+      try {
+        const location = await requestLocationPermission();
+        setUserLocation(location);
+
+        // Fetch weather data for the user's location
+        if (location.city) {
+          fetchWeatherData(location.city);
+        }
+      } catch (error) {
+        console.error('[Dashboard] Error getting location:', error);
+        const fallbackLocation = {
+          latitude: 0,
+          longitude: 0,
+          city: 'Kochi',
+          state: 'Kerala',
+          country: 'India',
+        };
+        saveUserLocation(fallbackLocation);
+        setUserLocation(fallbackLocation);
+        toast.info('Using default location (Kochi). Some features may be limited.');
+
+        // Fetch weather data for the fallback location
+        fetchWeatherData(fallbackLocation.city);
+      } finally {
+        setIsLoadingLocation(false);
+      }
+    };
+
+    loadUserLocation();
+  }, []);
 
   if (!isAuthenticated) {
     return <Navigate to="/" />;
@@ -118,6 +164,9 @@ const Dashboard: React.FC = () => {
             <Button variant="ghost" size="icon" className="text-pocketfarm-gray" onClick={scheduleNotification}>
               <Bell className="h-5 w-5" />
             </Button>
+            <Link to="/profile" className="text-pocketfarm-primary">
+              <User className="h-5 w-5" />
+            </Link>
             <Button variant="ghost" size="icon" className="text-pocketfarm-gray" onClick={() => logout()}>
               <LogOut className="h-5 w-5" />
             </Button>
@@ -200,45 +249,34 @@ const Dashboard: React.FC = () => {
         <div>
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold">My Garden</h2>
-            <Link to="/crop-library">
+            <Link to="/user-crops">
               <Button variant="link" className="text-pocketfarm-primary p-0 h-auto">
                 View all crops <ChevronRight className="h-4 w-4 ml-1" />
               </Button>
             </Link>
           </div>
           {userCrops.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {userCrops.slice(0, 3).map((crop) => (
-                <Card key={crop.id} className="border-pocketfarm-secondary/30">
-                  <div className="aspect-video w-full overflow-hidden rounded-t-lg">
-                    <img src={crop.image} alt={crop.name} className="w-full h-full object-cover" />
-                  </div>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-lg">{crop.name}</CardTitle>
-                    <CardDescription className="text-xs italic">{crop.scientificName}</CardDescription>
-                  </CardHeader>
-                  <CardContent className="pb-2">
-                    <div className="flex flex-wrap gap-2 mb-2">
-                      <Badge variant="outline" className="flex items-center gap-1 bg-pocketfarm-light">
-                        <Sun className="h-3 w-3 text-pocketfarm-accent" />
-                        {crop.sunlight} Sun
-                      </Badge>
-                      <Badge variant="outline" className="flex items-center gap-1 bg-pocketfarm-light">
-                        <Droplets className="h-3 w-3 text-blue-500" />
-                        {crop.waterNeeds} Water
-                      </Badge>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full border-pocketfarm-primary text-pocketfarm-primary mt-2"
-                      onClick={scheduleNotification}
-                    >
-                      <Bell className="h-3 w-3 mr-1" />
-                      Set watering reminder
-                    </Button>
-                  </CardContent>
-                </Card>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {userCrops.slice(0, 4).map((crop) => (
+                <CropCard
+                  key={crop.id || crop.name}
+                  crop={{
+                    ...crop,
+                    imageURL: crop.image || crop.imageURL || 'https://via.placeholder.com/150', // Fallback image
+                    scientific_name: crop.scientificName || crop.scientific_name || 'N/A',
+                    waterNeeds: crop.waterNeeds || 'Moderate',
+                    sunlight: crop.sunlight || 'Full',
+                    growing_conditions: crop.growing_conditions || 'N/A',
+                    planting_info: crop.planting_info || 'N/A',
+                    description: crop.description || 'No description available',
+                    companionCrops: crop.companionCrops || [],
+                    origin: crop.origin || 'Unknown',
+                    care_instructions: crop.care_instructions || 'No specific instructions',
+                    storage_info: crop.storage_info || 'Store in a cool, dry place',
+                    nutritional_info: crop.nutritional_info || 'No nutritional info available',
+                    culinary_info: crop.culinary_info || 'No culinary info available',
+                  }}
+                />
               ))}
             </div>
           ) : (

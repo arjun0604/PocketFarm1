@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
@@ -7,14 +6,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { requestLocationPermission, saveUserLocation } from '@/utils/locationUtils';
 import { toast } from 'sonner';
+import { Eye, EyeOff } from 'lucide-react';
 
 const AuthForm: React.FC = () => {
-  const { login, signup } = useAuth();
+  const { login, signup, isLoading } = useAuth();
   const navigate = useNavigate();
-  const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('login');
+  const [showPassword, setShowPassword] = useState(false);
   
   // Login form state
   const [loginEmail, setLoginEmail] = useState('');
@@ -25,48 +24,31 @@ const AuthForm: React.FC = () => {
   const [registerEmail, setRegisterEmail] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
   const [phone, setPhone] = useState('');
-  
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
-    
     try {
       await login(loginEmail, loginPassword);
-      requestLocation();
+      toast.success('Login successful!');
+      navigate('/dashboard');
     } catch (error) {
       console.error(error);
       toast.error('Login failed. Please check your credentials.');
-      setIsLoading(false);
     }
   };
-  
+
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
-    
     try {
       await signup(name, registerEmail, registerPassword, phone);
-      requestLocation();
+      toast.success('Registration successful!');
+      navigate('/dashboard');
     } catch (error) {
       console.error(error);
       toast.error('Registration failed. Please try again.');
-      setIsLoading(false);
     }
   };
-  
-  const requestLocation = async () => {
-    try {
-      toast.info('Please allow location access for better crop recommendations');
-      const location = await requestLocationPermission();
-      saveUserLocation(location);
-      navigate('/dashboard');
-    } catch (error) {
-      console.error('Location error:', error);
-      toast.warning('Location access denied. Some features may be limited.');
-      navigate('/dashboard');
-    }
-  };
-  
+
   return (
     <div className="w-full max-w-md mx-auto">
       <Card className="border-pocketfarm-secondary/30">
@@ -100,13 +82,22 @@ const AuthForm: React.FC = () => {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="login-password">Password</Label>
-                  <Input 
-                    id="login-password" 
-                    type="password" 
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    required
-                  />
+                  <div className="relative">
+                    <Input 
+                      id="login-password" 
+                      type={showPassword ? 'text' : 'password'} 
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      required
+                    />
+                    <button
+                      type="button"
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-sm leading-5"
+                      onClick={() => setShowPassword(!showPassword)}
+                    >
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
                 </div>
                 <Button 
                   type="submit" 
@@ -153,13 +144,22 @@ const AuthForm: React.FC = () => {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="register-password">Password</Label>
-                  <Input 
-                    id="register-password" 
-                    type="password" 
-                    value={registerPassword}
-                    onChange={(e) => setRegisterPassword(e.target.value)}
-                    required
-                  />
+                  <div className="relative">
+                    <Input 
+                      id="register-password" 
+                      type={showPassword ? 'text' : 'password'} 
+                      value={registerPassword}
+                      onChange={(e) => setRegisterPassword(e.target.value)}
+                      required
+                    />
+                    <button
+                      type="button"
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-sm leading-5"
+                      onClick={() => setShowPassword(!showPassword)}
+                    >
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
                 </div>
                 <Button 
                   type="submit" 

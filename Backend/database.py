@@ -58,12 +58,17 @@ CREATE TABLE IF NOT EXISTS watering_schedules (
 # Drop the users table if it exists
 cursor.execute('DROP TABLE IF EXISTS users')
 
-# Create the users table
+# Create the users table with updated fields
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_token TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    password TEXT NOT NULL,
+    phone TEXT,
     location_city TEXT,
+    location_state TEXT,
+    location_country TEXT,
     location_latitude REAL,
     location_longitude REAL,
     notification_enabled BOOLEAN DEFAULT 1,

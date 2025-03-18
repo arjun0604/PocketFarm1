@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Sun, Droplets, Clock, CalendarDays, Info, ChevronDown, ChevronUp } from 'lucide-react';
 import { Crop } from '@/utils/types/cropTypes';
-import { saveCropSelection } from '@/utils/storage/cropStorage';
+import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
 
 interface CropCardProps {
@@ -15,12 +15,71 @@ interface CropCardProps {
 
 const CropCard: React.FC<CropCardProps> = ({ crop, onSelect, selected = false }) => {
   const [showMore, setShowMore] = useState(false);
+  const [isInGarden, setIsInGarden] = useState(false); // Track if the crop is already in the garden
+  const { user } = useAuth();
 
-  const handleSelect = () => {
-    saveCropSelection(crop.id);
-    toast.success(`Added ${crop.name} to your garden`);
-    if (onSelect) {
-      onSelect();
+  // Fetch the user's garden crops when the component mounts
+  useEffect(() => {
+    const fetchUserCrops = async () => {
+      try {
+        const response = await fetch('http://127.0.0.1:5000/get_user_crops', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${user?.deviceToken}`,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch user crops');
+        }
+
+        const userCrops = await response.json();
+        // Check if the current crop is in the user's garden
+        if (userCrops.includes(crop.name)) {
+          setIsInGarden(true);
+        }
+      } catch (error) {
+        console.error('Error fetching user crops:', error);
+      }
+    };
+
+    if (user?.deviceToken) {
+      fetchUserCrops();
+    }
+  }, [user, crop.name]);
+
+  const handleAddToGarden = async () => {
+    try {
+      if (!user?.id) {
+        toast.error('User not authenticated. Please log in again.');
+        return;
+      }
+  
+      const response = await fetch('http://127.0.0.1:5000/add_to_library', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${user.id}`, // Use user ID for authentication
+        },
+        body: JSON.stringify({
+          user_id: user.id, // Ensure user_id is included
+          crop_name: crop.name, // Ensure crop.name is correctly passed
+        }),
+      });
+  
+      if (!response.ok) {
+        const errorData = await response.json(); // Parse the error response from the backend
+        throw new Error(errorData.error || 'Failed to add crop to garden');
+      }
+  
+      toast.success(`${crop.name} added to your garden!`);
+      setIsInGarden(true); // Update state to reflect that the crop is now in the garden
+      if (onSelect) {
+        onSelect(); // Trigger any additional logic after adding the crop
+      }
+    } catch (error) {
+      console.error('Error adding crop to garden:', error);
+      toast.error(error.message || 'Failed to add crop to garden. Please try again.');
     }
   };
 
@@ -93,20 +152,20 @@ const CropCard: React.FC<CropCardProps> = ({ crop, onSelect, selected = false })
       </CardContent>
 
       <CardFooter>
-        {!selected ? (
-          <Button 
-            className="w-full bg-pocketfarm-primary hover:bg-pocketfarm-dark"
-            onClick={handleSelect}
-          >
-            Add to My Garden
-          </Button>
-        ) : (
+        {isInGarden ? (
           <Button 
             variant="outline"
             className="w-full border-pocketfarm-primary text-pocketfarm-primary"
             disabled
           >
-            Added to Garden
+            Already in Garden
+          </Button>
+        ) : (
+          <Button 
+            className="w-full bg-pocketfarm-primary hover:bg-pocketfarm-dark"
+            onClick={handleAddToGarden}
+          >
+            Add to My Garden
           </Button>
         )}
       </CardFooter>

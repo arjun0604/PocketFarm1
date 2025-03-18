@@ -1,4 +1,3 @@
-
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
 interface User {
@@ -6,10 +5,12 @@ interface User {
   name: string;
   email: string;
   phone?: string;
-  location?: {
-    city?: string;
-    state?: string;
-    country?: string;
+  location: {
+    city: string;
+    state: string;
+    country: string;
+    latitude: number;
+    longitude: number;
   };
 }
 
@@ -41,29 +42,40 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const login = async (email: string, password: string) => {
     setIsLoading(true);
     try {
-      // Mock API call - would be replaced with actual backend auth
-      console.log('Login attempt:', { email, password });
-      
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Mock successful login response
-      const userData: User = {
-        id: '123',
-        name: email.split('@')[0],
-        email,
-        location: {
-          city: 'Unknown',
-          state: 'Unknown',
-          country: 'Unknown'
-        }
-      };
-      
+      // Fetch the user's location using the Geolocation API
+      const location = await new Promise<{ latitude: number; longitude: number }>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            resolve({
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+            });
+          },
+          (error) => {
+            reject(error);
+          }
+        );
+      });
+
+      // Send login request to the backend
+      const response = await fetch('http://127.0.0.1:5000/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password, location }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Invalid credentials');
+      }
+
+      const userData = await response.json();
       localStorage.setItem('pocketfarm_user', JSON.stringify(userData));
       setUser(userData);
     } catch (error) {
       console.error('Login error:', error);
-      throw new Error('Invalid credentials');
+      throw new Error('Login failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -72,30 +84,40 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const signup = async (name: string, email: string, password: string, phone?: string) => {
     setIsLoading(true);
     try {
-      // Mock API call - would be replaced with actual backend auth
-      console.log('Signup attempt:', { name, email, password, phone });
-      
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Mock successful signup response
-      const userData: User = {
-        id: '123',
-        name,
-        email,
-        phone,
-        location: {
-          city: 'Unknown',
-          state: 'Unknown',
-          country: 'Unknown'
-        }
-      };
-      
+      // Fetch the user's location using the Geolocation API
+      const location = await new Promise<{ latitude: number; longitude: number }>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            resolve({
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+            });
+          },
+          (error) => {
+            reject(error);
+          }
+        );
+      });
+
+      // Send signup request to the backend
+      const response = await fetch('http://127.0.0.1:5000/signup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name, email, password, phone, location }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Signup failed');
+      }
+
+      const userData = await response.json();
       localStorage.setItem('pocketfarm_user', JSON.stringify(userData));
       setUser(userData);
     } catch (error) {
       console.error('Signup error:', error);
-      throw new Error('Signup failed');
+      throw new Error('Signup failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -123,7 +145,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         login,
         signup,
         logout,
-        updateUserProfile
+        updateUserProfile,
       }}
     >
       {children}

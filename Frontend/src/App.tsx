@@ -1,4 +1,3 @@
-
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -12,6 +11,7 @@ import NurseryFinder from "./pages/NurseryFinder";
 import CropLibrary from "./pages/CropLibrary";
 import UserProfile from "./pages/UserProfile";
 import NotFound from "./pages/NotFound";
+import UserCrops from "./pages/UserCrops"; // Import the new UserCrops component
 
 const queryClient = new QueryClient();
 
@@ -29,6 +29,7 @@ const App = () => (
             <Route path="/nursery-finder" element={<NurseryFinder />} />
             <Route path="/crop-library" element={<CropLibrary />} />
             <Route path="/profile" element={<UserProfile />} />
+            <Route path="/user-crops" element={<UserCrops />} /> 
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
