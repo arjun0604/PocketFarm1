@@ -211,9 +211,9 @@ def predict():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
 @app.route('/recommend', methods=['POST'])
 def recommend():
-    """Recommend crops based on location and weather data."""
     try:
         data = request.get_json()
         
@@ -270,7 +270,7 @@ def recommend():
                     'recommended_info': crop
                 }
 
-                # Fetch companion crop details if requested
+                # Fetch companion crop names if requested
                 if include_companions:
                     companion_crops = []
                     companion_crop_1 = crop['Companion Crop 1']
@@ -278,16 +278,7 @@ def recommend():
 
                     for companion in [companion_crop_1, companion_crop_2]:
                         if companion:
-                            cursor.execute("SELECT * FROM crops WHERE name = ?", (companion,))
-                            companion_details = cursor.fetchone()
-                            if companion_details:
-                                companion_info = {
-                                    'name': companion_details[1],
-                                    'growing_conditions': companion_details[6],
-                                    'water_needs': companion_details[9],
-                                    'sunlight': companion_details[8]
-                                }
-                                companion_crops.append(companion_info)
+                            companion_crops.append(companion)
 
                     detailed_info['companion_crops'] = companion_crops
 
@@ -299,6 +290,8 @@ def recommend():
         return jsonify({'error': f'Missing feature: {str(e)}'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+    
 
 @app.route('/crop/<crop_name>', methods=['GET'])
 def get_crop_details(crop_name):
@@ -541,8 +534,42 @@ def get_weather():
         return jsonify(weather_info), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/remove_from_garden', methods=['POST'])
+def remove_from_garden():
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        crop_name = data.get('crop_name')
+
+        if not user_id or not crop_name:
+            return jsonify({'error': 'Missing required fields: user_id or crop_name'}), 400
+
+        # Connect to the database
+        conn = sqlite3.connect('PocketFarm.db')
+        cursor = conn.cursor()
+
+        # Fetch the crop ID
+        cursor.execute("SELECT id FROM crops WHERE name = ?", (crop_name,))
+        crop = cursor.fetchone()
+        if not crop:
+            conn.close()
+            return jsonify({'error': f'Crop "{crop_name}" not found in the database'}), 404
+
+        # Delete the crop from the user's garden
+        cursor.execute("DELETE FROM user_crops WHERE user_id = ? AND crop_id = ?", (user_id, crop[0]))
+        conn.commit()
+        conn.close()
+
+        return jsonify({'message': 'Crop removed from garden successfully!'}), 200
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return jsonify({'error': 'Database error occurred'}), 500
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return jsonify({'error': str(e)}), 500   
     
-    
+
 if __name__ == '__main__':
     # Start the background thread to fetch weather data
     threading.Thread(target=fetch_weather_alerts, daemon=True).start()

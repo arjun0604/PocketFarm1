@@ -5,6 +5,7 @@ import { Home, Search, MapPin, Droplets, User } from 'lucide-react';
 import NurseryMap from '@/components/NurseryMap';
 import { requestLocationPermission, Location } from '@/utils/locationUtils';
 import { toast } from 'sonner';
+import BottomNavigation from '@/components/BottomNavigation';
 
 const NurseryFinder: React.FC = () => {
   const { isAuthenticated } = useAuth();
@@ -47,26 +48,7 @@ const NurseryFinder: React.FC = () => {
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-10">
-        <div className="container mx-auto flex items-center justify-around py-2">
-          <Link to="/dashboard" className="flex flex-col items-center p-2 text-pocketfarm-gray">
-            <Home className="h-5 w-5" />
-            <span className="text-xs mt-1">Home</span>
-          </Link>
-          <Link to="/recommendations" className="flex flex-col items-center p-2 text-pocketfarm-gray">
-            <Search className="h-5 w-5" />
-            <span className="text-xs mt-1">Find Crops</span>
-          </Link>
-          <Link to="/nursery-finder" className="flex flex-col items-center p-2 text-pocketfarm-primary">
-            <MapPin className="h-5 w-5" />
-            <span className="text-xs mt-1">Nurseries</span>
-          </Link>
-          <Link to="/crop-library" className="flex flex-col items-center p-2 text-pocketfarm-gray">
-            <Droplets className="h-5 w-5" />
-            <span className="text-xs mt-1">Crops</span>
-          </Link>
-        </div>
-      </nav>
+      <BottomNavigation />
     </div>
   );
 };

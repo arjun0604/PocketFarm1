@@ -1,15 +1,26 @@
-
 export interface Crop {
-  id: string;
+  id: number;
   name: string;
-  scientificName: string;
-  image: string;
+  scientific_name: string;
+  imageURL: string;
+  description: string;
+  origin: string;
+  growing_conditions: string;
+  planting_info: string;
+  care_instructions: string;
+  storage_info: string;
+  nutritional_info: string;
+  culinary_info: string;
   sunlight: 'Full' | 'Partial';
   waterNeeds: 'Low' | 'Medium' | 'High';
-  growthDuration: string;
-  description: string;
-  harvestTime: string;
-  companionPlants?: string[];
+  companion_crops: string[];
+  recommended_info: {
+    Crop: string;
+    'Avg Area': number;
+    Drainage: string;
+    'Companion Crop 1': string;
+    'Companion Crop 2': string;
+  };
 }
 
 export interface GrowingConditions {

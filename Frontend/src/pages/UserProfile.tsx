@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import { Navigate, Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
@@ -8,8 +7,8 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Home, Search, MapPin, Droplets, User, Phone, Mail, MapPinIcon, History } from 'lucide-react';
 import { getUserLocation } from '@/utils/locationUtils';
-import { getUserCropDetails } from '@/utils/storage/cropStorage';
 import { toast } from 'sonner';
+import { useGarden } from '@/context/GardenContext'; // Import useGarden
 
 const UserProfile: React.FC = () => {
   const { user, isAuthenticated, updateUserProfile, logout } = useAuth();
@@ -17,7 +16,7 @@ const UserProfile: React.FC = () => {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [isEditing, setIsEditing] = useState(false);
-  const [selectedCrops, setSelectedCrops] = useState(getUserCropDetails());
+  const { userCrops } = useGarden(); // Use the garden context
   const location = getUserLocation();
   
   useEffect(() => {
@@ -184,10 +183,10 @@ const UserProfile: React.FC = () => {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {selectedCrops.length > 0 ? (
+              {userCrops.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {selectedCrops.map(crop => (
-                    <div key={crop.id} className="flex items-center gap-3 p-3 border rounded-md">
+                  {userCrops.map((crop) => (
+                    <div key={crop.name} className="flex items-center gap-3 p-3 border rounded-md">
                       <div className="h-10 w-10 bg-pocketfarm-light rounded-full flex items-center justify-center">
                         <Droplets className="h-5 w-5 text-pocketfarm-primary" />
                       </div>

@@ -9,6 +9,7 @@ import os
 from functools import lru_cache
 from flask_cors import CORS  # Import CORS
 from dotenv import load_dotenv
+import bcrypt  
 
 # Load environment variables
 load_dotenv()
@@ -305,7 +306,7 @@ def get_crop_details(crop_name):
     try:
         conn = sqlite3.connect('PocketFarm.db')
         cursor = conn.cursor()
-
+        crop_name=crop_name.capitalize()
         cursor.execute("SELECT * FROM crops WHERE name = ?", (crop_name,))
         crop = cursor.fetchone()
 
@@ -332,6 +333,249 @@ def get_crop_details(crop_name):
         return jsonify(crop_details)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/add_to_library', methods=['POST'])
+def add_to_library():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided in the request'}), 400
+
+        user_id = data.get('user_id')
+        crop_name = data.get('crop_name')
+
+        if not user_id or not crop_name:
+            return jsonify({'error': 'Missing required fields: user_id or crop_name'}), 400
+
+        # Connect to the database
+        conn = sqlite3.connect('PocketFarm.db')
+        cursor = conn.cursor()
+
+        # Check if the crop exists in the crops table
+        cursor.execute("SELECT id FROM crops WHERE name = ?", (crop_name,))
+        crop = cursor.fetchone()
+        if not crop:
+            conn.close()
+            return jsonify({'error': f'Crop "{crop_name}" not found in the database'}), 404
+
+        # Check if the user exists
+        cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
+        user = cursor.fetchone()
+        if not user:
+            conn.close()
+            return jsonify({'error': f'User with id "{user_id}" not found'}), 404
+
+        # Check if the crop is already in the user's library
+        cursor.execute("SELECT * FROM user_crops WHERE user_id = ? AND crop_id = ?", (user_id, crop[0]))
+        existing_entry = cursor.fetchone()
+        if existing_entry:
+            conn.close()
+            return jsonify({'message': 'Crop is already in your library!'}), 200
+
+        # Insert the crop into the user's library
+        cursor.execute("INSERT INTO user_crops (user_id, crop_id) VALUES (?, ?)", (user_id, crop[0]))
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({'message': 'Crop added to library successfully!'}), 200
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return jsonify({'error': 'Database error occurred'}), 500
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return jsonify({'error': str(e)}), 500
+    
+
+@app.route('/get_user_crops', methods=['GET'])
+def get_user_crops():
+    try:
+        # Extract user_id from the Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Authorization header is missing or invalid'}), 401
+
+        user_id = auth_header.split(' ')[1]  # Extract user_id from the token
+
+        # Connect to the database
+        conn = sqlite3.connect('PocketFarm.db')
+        cursor = conn.cursor()
+
+        # Fetch the crops added by the user
+        cursor.execute(
+            "SELECT crops.name FROM user_crops JOIN crops ON user_crops.crop_id = crops.id WHERE user_crops.user_id = ?",
+            (user_id,)
+        )
+        crops = cursor.fetchall()
+
+        conn.close()
+
+        # Format the response
+        crop_list = [crop[0] for crop in crops]
+        return jsonify(crop_list), 200
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return jsonify({'error': 'Database error occurred'}), 500
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+
+@app.route('/signup', methods=['POST'])
+def signup():
+    try:
+        data = request.get_json()
+        name = data.get('name')
+        email = data.get('email')
+        password = data.get('password')  # Plain text password from the frontend
+        phone = data.get('phone')
+        location = data.get('location')  # { latitude, longitude }
+
+        if not name or not email or not password:
+            return jsonify({'error': 'Missing required fields: name, email, or password'}), 400
+
+        # Hash the password
+        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+
+        # Geocode the location to get city, state, and country
+        geocode_result = cached_geocode(location['latitude'], location['longitude'])
+        city = geocode_result['data'].get('city', 'Unknown')
+        state = geocode_result['data'].get('state', 'Unknown')
+        country = geocode_result['data'].get('country', 'Unknown')
+
+        # Insert the user into the database
+        conn = sqlite3.connect('PocketFarm.db')
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO users (name, email, password, phone, location_city, location_state, location_country, location_latitude, location_longitude) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, email, hashed_password, phone, city, state, country, location['latitude'], location['longitude'])
+        )
+        user_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+
+        # Return the user data including location
+        return jsonify({
+            'id': user_id,
+            'name': name,
+            'email': email,
+            'phone': phone,
+            'location': {
+                'city': city,
+                'state': state,
+                'country': country,
+                'latitude': location['latitude'],
+                'longitude': location['longitude'],
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+@app.route('/login', methods=['POST'])
+def login():
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        password = data.get('password')  # Plain text password from the frontend
+
+        if not email or not password:
+            return jsonify({'error': 'Missing required fields: email or password'}), 400
+
+        # Fetch the user from the database
+        conn = sqlite3.connect('PocketFarm.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+        user = cursor.fetchone()
+        conn.close()
+
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        # Verify the password
+        hashed_password = user[3]  # Password is stored in the 4th column
+        if not bcrypt.checkpw(password.encode('utf-8'), hashed_password):
+            return jsonify({'error': 'Invalid password'}), 401
+
+        # Return the user data including location
+        return jsonify({
+            'id': user[0],
+            'name': user[1],
+            'email': user[2],
+            'phone': user[4],
+            'location': {
+                'city': user[5],
+                'state': user[6],
+                'country': user[7],
+                'latitude': user[8],
+                'longitude': user[9],
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/weather', methods=['POST'])
+def get_weather():
+    """Fetch weather data for a specific location."""
+    try:
+        data = request.get_json()
+        location = data.get('location')  # Location can be a city name or coordinates
+
+        if not location:
+            return jsonify({'error': 'Location is required'}), 400
+
+        # Fetch weather data from OpenWeatherMap API
+        weather_data = get_weather_data(location)
+        if not weather_data:
+            return jsonify({'error': 'Failed to fetch weather data'}), 500
+
+        # Extract relevant weather information
+        weather_info = {
+            'temp': weather_data['main']['temp'],
+            'condition': weather_data['weather'][0]['main'],
+            'humidity': weather_data['main']['humidity'],
+            'wind_speed': weather_data['wind']['speed'],
+            'icon': weather_data['weather'][0]['icon'],  # Weather icon code
+        }
+
+        return jsonify(weather_info), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/remove_from_garden', methods=['POST'])
+def remove_from_garden():
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        crop_name = data.get('crop_name')
+
+        if not user_id or not crop_name:
+            return jsonify({'error': 'Missing required fields: user_id or crop_name'}), 400
+
+        # Connect to the database
+        conn = sqlite3.connect('PocketFarm.db')
+        cursor = conn.cursor()
+
+        # Fetch the crop ID
+        cursor.execute("SELECT id FROM crops WHERE name = ?", (crop_name,))
+        crop = cursor.fetchone()
+        if not crop:
+            conn.close()
+            return jsonify({'error': f'Crop "{crop_name}" not found in the database'}), 404
+
+        # Delete the crop from the user's garden
+        cursor.execute("DELETE FROM user_crops WHERE user_id = ? AND crop_id = ?", (user_id, crop[0]))
+        conn.commit()
+        conn.close()
+
+        return jsonify({'message': 'Crop removed from garden successfully!'}), 200
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return jsonify({'error': 'Database error occurred'}), 500
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return jsonify({'error': str(e)}), 500   
+    
 
 if __name__ == '__main__':
     # Start the background thread to fetch weather data

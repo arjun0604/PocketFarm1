@@ -6,20 +6,48 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Badge } from '@/components/ui/badge';
 import { Home, Search, MapPin, LogOut, Bell, ChevronRight, Droplets, CloudRain, Sun, RefreshCw, User } from 'lucide-react';
 import { getUserLocation, requestLocationPermission, saveUserLocation, Location } from '@/utils/locationUtils';
-import { getUserCropDetails, Crop } from '@/utils/cropUtils';
+import { Crop } from '@/utils/types/cropTypes';
 import { toast } from 'sonner';
 import CropCard from '@/components/CropCard';
+import { useGarden } from '@/context/GardenContext'; // Import useGarden
+import BottomNavigation from '@/components/BottomNavigation'; // Import BottomNavigation
 
 const Dashboard: React.FC = () => {
   const { user, isAuthenticated, logout } = useAuth();
   const [userLocation, setUserLocation] = useState<Location | null>(null);
-  const [userCrops, setUserCrops] = useState<Crop[]>([]);
   const [weatherInfo, setWeatherInfo] = useState<{ temp: number; condition: string; icon: string }>({ 
     temp: 0, 
     condition: '', 
     icon: '' 
   });
   const [isLoadingLocation, setIsLoadingLocation] = useState(false);
+  const { userCrops } = useGarden(); // Use the garden context
+  const [cropDetails, setCropDetails] = useState<Crop[]>([]); // Store detailed crop information
+
+  // Fetch crop details for the user's garden crops
+  useEffect(() => {
+    const fetchCropDetails = async () => {
+      try {
+        const cropDetailsPromises = userCrops.map(async (cropName) => {
+          const response = await fetch(`http://127.0.0.1:5000/crop/${cropName}`);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch details for ${cropName}`);
+          }
+          return response.json();
+        });
+
+        const crops = await Promise.all(cropDetailsPromises);
+        setCropDetails(crops);
+      } catch (error) {
+        console.error('Error fetching crop details:', error);
+        toast.error('Failed to load crop details. Please try again.');
+      }
+    };
+
+    if (userCrops.length > 0) {
+      fetchCropDetails();
+    }
+  }, [userCrops]);
 
   // Fetch weather data from the backend
   const fetchWeatherData = async (location: string) => {
@@ -66,44 +94,6 @@ const Dashboard: React.FC = () => {
       setIsLoadingLocation(false);
     }
   };
-
-  useEffect(() => {
-    const fetchUserCrops = async () => {
-      try {
-        const response = await fetch('http://127.0.0.1:5000/get_user_crops', {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${user?.id}`,
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch user crops');
-        }
-
-        const cropNames = await response.json();
-
-        const cropsWithDetails = await Promise.all(
-          cropNames.map(async (cropName: string) => {
-            const cropResponse = await fetch(`http://127.0.0.1:5000/crop/${cropName}`);
-            if (!cropResponse.ok) {
-              throw new Error(`Failed to fetch details for ${cropName}`);
-            }
-            return cropResponse.json();
-          })
-        );
-
-        setUserCrops(cropsWithDetails);
-      } catch (error) {
-        console.error('Error fetching user crops:', error);
-        toast.error('Failed to load your garden crops. Please try again.');
-      }
-    };
-
-    if (isAuthenticated && user?.id) {
-      fetchUserCrops();
-    }
-  }, [isAuthenticated, user]);
 
   useEffect(() => {
     const loadUserLocation = async () => {
@@ -255,27 +245,12 @@ const Dashboard: React.FC = () => {
               </Button>
             </Link>
           </div>
-          {userCrops.length > 0 ? (
+          {cropDetails.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {userCrops.slice(0, 4).map((crop) => (
+              {cropDetails.slice(0, 4).map((crop) => (
                 <CropCard
                   key={crop.id || crop.name}
-                  crop={{
-                    ...crop,
-                    imageURL: crop.image || crop.imageURL || 'https://via.placeholder.com/150', // Fallback image
-                    scientific_name: crop.scientificName || crop.scientific_name || 'N/A',
-                    waterNeeds: crop.waterNeeds || 'Moderate',
-                    sunlight: crop.sunlight || 'Full',
-                    growing_conditions: crop.growing_conditions || 'N/A',
-                    planting_info: crop.planting_info || 'N/A',
-                    description: crop.description || 'No description available',
-                    companionCrops: crop.companionCrops || [],
-                    origin: crop.origin || 'Unknown',
-                    care_instructions: crop.care_instructions || 'No specific instructions',
-                    storage_info: crop.storage_info || 'Store in a cool, dry place',
-                    nutritional_info: crop.nutritional_info || 'No nutritional info available',
-                    culinary_info: crop.culinary_info || 'No culinary info available',
-                  }}
+                  crop={crop} // Pass the full crop details
                 />
               ))}
             </div>
@@ -307,26 +282,8 @@ const Dashboard: React.FC = () => {
         </Link>
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-10">
-        <div className="container mx-auto flex items-center justify-around py-2">
-          <Link to="/dashboard" className="flex flex-col items-center p-2 text-pocketfarm-primary">
-            <Home className="h-5 w-5" />
-            <span className="text-xs mt-1">Home</span>
-          </Link>
-          <Link to="/recommendations" className="flex flex-col items-center p-2 text-pocketfarm-gray">
-            <Search className="h-5 w-5" />
-            <span className="text-xs mt-1">Find Crops</span>
-          </Link>
-          <Link to="/nursery-finder" className="flex flex-col items-center p-2 text-pocketfarm-gray">
-            <MapPin className="h-5 w-5" />
-            <span className="text-xs mt-1">Nurseries</span>
-          </Link>
-          <Link to="/crop-library" className="flex flex-col items-center p-2 text-pocketfarm-gray">
-            <Droplets className="h-5 w-5" />
-            <span className="text-xs mt-1">Crops</span>
-          </Link>
-        </div>
-      </nav>
+      {/* Bottom Navigation */}
+      <BottomNavigation />
     </div>
   );
 };

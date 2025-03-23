@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -6,85 +6,88 @@ import { Sun, Droplets, Clock, CalendarDays, Info, ChevronDown, ChevronUp } from
 import { Crop } from '@/utils/types/cropTypes';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
+import { useGarden } from '@/context/GardenContext';
 
 interface CropCardProps {
   crop: Crop;
   onSelect?: () => void;
   selected?: boolean;
+  onSelectCompanion?: (companionCropNames: string[]) => void;
+  onAddToGarden?: () => Promise<void>;
+  onRemoveFromGarden?: () => Promise<void>;
 }
 
-const CropCard: React.FC<CropCardProps> = ({ crop, onSelect, selected = false }) => {
+const CropCard: React.FC<CropCardProps> = ({ 
+  crop, 
+  onSelect, 
+  selected = false, 
+  onSelectCompanion,
+  onAddToGarden,
+  onRemoveFromGarden
+}) => {
   const [showMore, setShowMore] = useState(false);
-  const [isInGarden, setIsInGarden] = useState(false); // Track if the crop is already in the garden
   const { user } = useAuth();
+  const { userCrops, addCropToGarden, removeCropFromGarden } = useGarden();
 
-  // Fetch the user's garden crops when the component mounts
-  useEffect(() => {
-    const fetchUserCrops = async () => {
-      try {
-        const response = await fetch('http://127.0.0.1:5000/get_user_crops', {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${user?.deviceToken}`,
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch user crops');
-        }
-
-        const userCrops = await response.json();
-        // Check if the current crop is in the user's garden
-        if (userCrops.includes(crop.name)) {
-          setIsInGarden(true);
-        }
-      } catch (error) {
-        console.error('Error fetching user crops:', error);
-      }
-    };
-
-    if (user?.deviceToken) {
-      fetchUserCrops();
-    }
-  }, [user, crop.name]);
+  const isInGarden = userCrops.includes(crop.name);
 
   const handleAddToGarden = async () => {
-    try {
-      if (!user?.id) {
-        toast.error('User not authenticated. Please log in again.');
-        return;
+    if (onAddToGarden) {
+      await onAddToGarden();
+    } else {
+      try {
+        if (!user?.id) {
+          toast.error('User not authenticated. Please log in again.');
+          return;
+        }
+
+        if (isInGarden) {
+          toast.error('This crop is already in your garden.');
+          return;
+        }
+
+        await addCropToGarden(crop.name);
+        toast.success(`${crop.name} added to your garden!`);
+        if (onSelect) {
+          onSelect();
+        }
+      } catch (error) {
+        console.error('Error adding crop to garden:', error);
+        toast.error('Failed to add crop to garden. Please try again.');
       }
-  
-      const response = await fetch('http://127.0.0.1:5000/add_to_library', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${user.id}`, // Use user ID for authentication
-        },
-        body: JSON.stringify({
-          user_id: user.id, // Ensure user_id is included
-          crop_name: crop.name, // Ensure crop.name is correctly passed
-        }),
-      });
-  
-      if (!response.ok) {
-        const errorData = await response.json(); // Parse the error response from the backend
-        throw new Error(errorData.error || 'Failed to add crop to garden');
+    }
+  };
+
+  const handleRemoveFromGarden = async () => {
+    if (onRemoveFromGarden) {
+      await onRemoveFromGarden();
+    } else {
+      try {
+        if (!user?.id) {
+          toast.error('User not authenticated. Please log in again.');
+          return;
+        }
+
+        await removeCropFromGarden(crop.name);
+        toast.success(`${crop.name} removed from your garden!`);
+        if (onSelect) {
+          onSelect();
+        }
+      } catch (error) {
+        console.error('Error removing crop from garden:', error);
+        toast.error('Failed to remove crop from garden. Please try again.');
       }
-  
-      toast.success(`${crop.name} added to your garden!`);
-      setIsInGarden(true); // Update state to reflect that the crop is now in the garden
-      if (onSelect) {
-        onSelect(); // Trigger any additional logic after adding the crop
-      }
-    } catch (error) {
-      console.error('Error adding crop to garden:', error);
-      toast.error(error.message || 'Failed to add crop to garden. Please try again.');
+    }
+  };
+
+  const handleCompanionCropClick = () => {
+    if (crop.companionPlants && crop.companionPlants.length > 0 && onSelectCompanion) {
+      onSelectCompanion(crop.companionPlants); // Pass companion plant names to parent component
     }
   };
 
   return (
-    <Card className={`h-full border-pocketfarm-secondary/30 transition-all hover:shadow-md ${selected ? 'ring-2 ring-pocketfarm-primary' : ''}`}>
+    <Card className={`h-full flex flex-col border-pocketfarm-secondary/30 transition-all hover:shadow-md ${selected ? 'ring-2 ring-pocketfarm-primary' : ''}`}>
       {/* Crop Image */}
       <div className="aspect-video w-full overflow-hidden rounded-t-lg">
         <img 
@@ -99,7 +102,7 @@ const CropCard: React.FC<CropCardProps> = ({ crop, onSelect, selected = false })
         <CardDescription className="text-xs italic">{crop.scientific_name}</CardDescription>
       </CardHeader>
 
-      <CardContent className="space-y-2 pb-2">
+      <CardContent className="flex-grow space-y-2 pb-2">
         {/* Essential Crop Details */}
         <div className="flex flex-wrap gap-2">
           <Badge variant="outline" className="flex items-center gap-1 bg-pocketfarm-light">
@@ -123,10 +126,15 @@ const CropCard: React.FC<CropCardProps> = ({ crop, onSelect, selected = false })
           <span>Harvest: {crop.planting_info}</span>
         </div>
 
-        {crop.companionCrops && crop.companionCrops.length > 0 && (
+        {crop.companionPlants && crop.companionPlants.length > 0 && (
           <div className="text-xs">
             <span className="font-medium">Companion plants: </span>
-            {crop.companionCrops.join(', ')}
+            <button
+              onClick={handleCompanionCropClick}
+              className="text-pocketfarm-primary hover:underline"
+            >
+              {crop.companionPlants.join(', ')}
+            </button>
           </div>
         )}
 
@@ -151,14 +159,14 @@ const CropCard: React.FC<CropCardProps> = ({ crop, onSelect, selected = false })
         )}
       </CardContent>
 
-      <CardFooter>
+      <CardFooter className="mt-auto">
         {isInGarden ? (
           <Button 
             variant="outline"
-            className="w-full border-pocketfarm-primary text-pocketfarm-primary"
-            disabled
+            className="w-full bg-red-500 text-white hover:bg-red-600" // Red button for removal
+            onClick={handleRemoveFromGarden} // Trigger removal function
           >
-            Already in Garden
+            Remove from Garden
           </Button>
         ) : (
           <Button 

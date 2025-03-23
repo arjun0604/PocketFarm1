@@ -5,24 +5,19 @@ import { Crop } from "@/utils/types/cropTypes";
 import CropCard from "./CropCard";
 import { Search, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { useGarden } from "@/context/GardenContext"; // Import useGarden
 
 const INITIAL_CROPS = ["Tomato", "Lettuce", "Carrot", "Cauliflower", "Coriander", "Potato", "Garlic", "Onion"];
 
 const CropSearch: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Crop[]>([]);
-  const [selectedCropIds, setSelectedCropIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSearching, setIsSearching] = useState(false);
+  const { userCrops, addCropToGarden, removeCropFromGarden } = useGarden(); // Use the garden context
 
   useEffect(() => {
     fetchInitialCrops();
-
-    // Load user's selected crops from localStorage
-    const storedSelections = localStorage.getItem("pocketfarm_selected_crops");
-    if (storedSelections) {
-      setSelectedCropIds(JSON.parse(storedSelections));
-    }
   }, []);
 
   const fetchInitialCrops = async () => {
@@ -82,17 +77,6 @@ const CropSearch: React.FC = () => {
     fetchInitialCrops();
   };
 
-  const handleCropSelect = (cropId: string) => {
-    setSelectedCropIds((prev) => {
-      if (!prev.includes(cropId)) {
-        const newSelected = [...prev, cropId];
-        localStorage.setItem("pocketfarm_selected_crops", JSON.stringify(newSelected));
-        return newSelected;
-      }
-      return prev;
-    });
-  };
-
   return (
     <div className="space-y-6">
       {/* Search Bar */}
@@ -142,7 +126,11 @@ const CropSearch: React.FC = () => {
         ) : searchResults.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
             {searchResults.map((crop) => (
-              <CropCard key={crop.id} crop={crop} onSelect={() => handleCropSelect(crop.id)} selected={selectedCropIds.includes(crop.id)} />
+              <CropCard
+                key={crop.id}
+                crop={crop}
+                onRemoveFromGarden={() => removeCropFromGarden(crop.name)} // Pass the removal function
+              />
             ))}
           </div>
         ) : (
