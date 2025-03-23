@@ -5,8 +5,6 @@ import { Bell, LogOut, User, ChevronLeft } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { format } from 'date-fns';
-import axios from 'axios';
-import { useQueryClient } from '@tanstack/react-query';
 
 interface Notification {
   id: number;
@@ -28,22 +26,9 @@ const Header: React.FC<HeaderProps> = ({
   onBackClick,
   notifications = [] 
 }) => {
-  const { logout, user } = useAuth();
+  const { logout } = useAuth();
   const [isNotificationDialogOpen, setIsNotificationDialogOpen] = useState(false);
-  const queryClient = useQueryClient();
   const unreadNotifications = notifications.filter(n => !n.read).length;
-
-  const handleNotificationClick = async () => {
-    if (!user || unreadNotifications === 0) return;
-    
-    try {
-      await axios.post(`http://127.0.0.1:5000/notifications/${Number(user.id)}/read`);
-      // Invalidate and refetch notifications
-      queryClient.invalidateQueries({ queryKey: ['userNotifications', user.id] });
-    } catch (error) {
-      console.error('Error marking notifications as read:', error);
-    }
-  };
 
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
@@ -63,10 +48,7 @@ const Header: React.FC<HeaderProps> = ({
                 variant="ghost" 
                 size="icon" 
                 className="relative"
-                onClick={() => {
-                  setIsNotificationDialogOpen(true);
-                  handleNotificationClick();
-                }}
+                onClick={() => setIsNotificationDialogOpen(true)}
               >
                 <Bell className="h-5 w-5" />
                 {unreadNotifications > 0 && (

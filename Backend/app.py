@@ -18,13 +18,13 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app, resources={
     r"/*": {
-        "origins": ["http://localhost:8080", "https://localhost:8080"],
+        "origins": ["http://localhost:8080", "https://localhost:8080", "http://127.0.0.1:8080", "https://127.0.0.1:8080"],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
         "supports_credentials": True
     }
 })
-socketio = SocketIO(app, cors_allowed_origins=["http://localhost:8080", "https://localhost:8080"], supports_credentials=True)
+socketio = SocketIO(app, cors_allowed_origins=["http://localhost:8080", "https://localhost:8080", "http://127.0.0.1:8080", "https://127.0.0.1:8080"], supports_credentials=True)
 
 # Use environment variable for API key
 API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
@@ -160,10 +160,22 @@ def delete_user_schedule(user_id, crop_name):
         conn = get_db()
         cursor = conn.cursor()
 
+        # First check if the schedule exists
+        cursor.execute('''
+            SELECT ws.id FROM watering_schedules ws
+            JOIN crops c ON ws.crop_id = c.id
+            WHERE ws.user_id = ? AND c.name = ?
+        ''', (user_id, crop_name))
+        schedule = cursor.fetchone()
+
+        if not schedule:
+            conn.close()
+            return jsonify({'message': 'No schedule found for this crop'}), 200
+
         # Delete the user's watering schedule
         cursor.execute('''
-            DELETE FROM watering_schedules ws
-            WHERE ws.user_id = ? AND ws.crop_id IN (
+            DELETE FROM watering_schedules
+            WHERE user_id = ? AND crop_id IN (
                 SELECT id FROM crops WHERE name = ?
             )
         ''', (user_id, crop_name))
@@ -172,6 +184,7 @@ def delete_user_schedule(user_id, crop_name):
         conn.close()
         return jsonify({'message': 'User schedule deleted successfully!'}), 200
     except Exception as e:
+        print(f"Error deleting user schedule: {str(e)}")  # Add logging
         return jsonify({'error': str(e)}), 500
 
 def calculate_next_dates(last_date, frequency):
@@ -212,12 +225,13 @@ def update_watering():
         # Calculate the next watering date
         next_watering = calculate_next_dates(last_watered, watering_frequency)
 
-        # Update the watering schedule
+        # Update the watering schedule with today's date
+        current_date = datetime.now().strftime('%Y-%m-%d')
         cursor.execute('''
             UPDATE watering_schedules
-            SET last_watered = DATE('now'), next_watering = ?
+            SET last_watered = ?, next_watering = ?
             WHERE id = ?
-        ''', (next_watering, schedule_id))
+        ''', (current_date, next_watering, schedule_id))
         conn.commit()
 
         # Create a notification for the user
@@ -557,19 +571,26 @@ def recommend():
                     'storage_info': crop_details[9],
                     'nutritional_info': crop_details[10],
                     'culinary_info': crop_details[11],
-                    'recommended_info': crop
+                    'recommended_info': {
+                        'Crop': crop['Crop'],
+                        'Avg Area': crop['Avg Area'],
+                        'Drainage': crop['Drainage'],
+                        'Companion Crop 1': crop['Companion Crop 1'],
+                        'Companion Crop 2': crop['Companion Crop 2'],
+                        'Soil Type': crop['Soil Type'],
+                        'Potted': crop['Potted'],
+                        'Sunlight': crop['Sunlight'],
+                        'Water Needs': crop['Water Needs']
+                    }
                 }
 
-                # Fetch companion crop names if requested
+                # Add companion crops if requested
                 if include_companions:
                     companion_crops = []
-                    companion_crop_1 = crop['Companion Crop 1']
-                    companion_crop_2 = crop['Companion Crop 2']
-
-                    for companion in [companion_crop_1, companion_crop_2]:
-                        if companion:
-                            companion_crops.append(companion)
-
+                    if crop['Companion Crop 1']:
+                        companion_crops.append(crop['Companion Crop 1'])
+                    if crop['Companion Crop 2']:
+                        companion_crops.append(crop['Companion Crop 2'])
                     detailed_info['companion_crops'] = companion_crops
 
                 crops_with_details.append(detailed_info)
@@ -951,155 +972,6 @@ def create_notification(user_id, message):
         conn.close()
     except Exception as e:
         print(f"Error creating notification: {str(e)}")
-
-@app.route('/notifications/<int:user_id>/read', methods=['POST'])
-def mark_notifications_read(user_id):
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        # Update all notifications for the user to read status
-        cursor.execute("""
-            UPDATE notifications 
-            SET read_status = 1 
-            WHERE user_id = ? AND read_status = 0
-        """, (user_id,))
-        
-        conn.commit()
-        conn.close()
-        
-        return jsonify({'message': 'Notifications marked as read'}), 200
-    except Exception as e:
-        print(f"Error marking notifications as read: {str(e)}")
-        return jsonify({'error': 'Failed to mark notifications as read'}), 500
-
-@app.route('/nurseries', methods=['GET'])
-def get_nurseries():
-    try:
-        # Get query parameters for filtering
-        location = request.args.get('location', 'Kochi')
-        specialty = request.args.get('specialty')
-        
-        # Connect to the database
-        conn = sqlite3.connect('PocketFarm.db')
-        cursor = conn.cursor()
-        
-        # Base query
-        query = """
-            SELECT 
-                id,
-                name,
-                address,
-                phone,
-                hours,
-                specialties,
-                rating,
-                location,
-                website,
-                description
-            FROM nurseries
-            WHERE location = ?
-        """
-        params = [location]
-        
-        # Add specialty filter if provided
-        if specialty:
-            query += " AND specialties LIKE ?"
-            params.append(f"%{specialty}%")
-        
-        cursor.execute(query, params)
-        nurseries = cursor.fetchall()
-        
-        # Format the response
-        formatted_nurseries = []
-        for nursery in nurseries:
-            formatted_nurseries.append({
-                'id': nursery[0],
-                'name': nursery[1],
-                'address': nursery[2],
-                'phone': nursery[3],
-                'hours': nursery[4],
-                'specialties': nursery[5].split(','),
-                'rating': nursery[6],
-                'location': nursery[7],
-                'website': nursery[8],
-                'description': nursery[9]
-            })
-        
-        conn.close()
-        return jsonify(formatted_nurseries)
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/nearby-nurseries', methods=['GET'])
-def get_nearby_nurseries():
-    try:
-        # Get location parameters
-        latitude = request.args.get('latitude')
-        longitude = request.args.get('longitude')
-        radius = request.args.get('radius', '5000')  # Default 5km radius
-
-        if not latitude or not longitude:
-            return jsonify({'error': 'Latitude and longitude are required'}), 400
-
-        # Google Places API endpoint
-        url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
-        
-        # Parameters for the API request
-        params = {
-            'location': f"{latitude},{longitude}",
-            'radius': radius,
-            'type': 'garden_center',
-            'key': os.getenv('GOOGLE_PLACES_API_KEY')
-        }
-
-        # Make the API request
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
-
-        if data['status'] != 'OK':
-            return jsonify({'error': f"Places API error: {data['status']}"}), 500
-
-        # Format the response
-        nurseries = []
-        for place in data['results']:
-            # Get detailed place information
-            place_id = place['place_id']
-            details_url = "https://maps.googleapis.com/maps/api/place/details/json"
-            details_params = {
-                'place_id': place_id,
-                'fields': 'opening_hours,formatted_phone_number,website,rating,reviews',
-                'key': os.getenv('GOOGLE_PLACES_API_KEY')
-            }
-            
-            details_response = requests.get(details_url, params=details_params)
-            details_data = details_response.json()
-
-            nursery = {
-                'id': place_id,
-                'name': place['name'],
-                'address': place['vicinity'],
-                'location': {
-                    'lat': place['geometry']['location']['lat'],
-                    'lng': place['geometry']['location']['lng']
-                },
-                'rating': place.get('rating', 0),
-                'total_ratings': place.get('user_ratings_total', 0),
-                'phone': details_data.get('result', {}).get('formatted_phone_number', 'N/A'),
-                'website': details_data.get('result', {}).get('website', 'N/A'),
-                'hours': details_data.get('result', {}).get('opening_hours', {}).get('weekday_text', []),
-                'reviews': details_data.get('result', {}).get('reviews', [])
-            }
-            nurseries.append(nursery)
-
-        return jsonify(nurseries)
-
-    except requests.exceptions.RequestException as e:
-        return jsonify({'error': f'API request failed: {str(e)}'}), 500
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     # Start the background thread to fetch weather data

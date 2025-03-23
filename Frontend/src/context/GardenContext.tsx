@@ -102,12 +102,14 @@ export const GardenProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       });
 
       if (response.status === 200) {
-        // Delete schedule for the removed crop
+        // Try to delete schedule for the removed crop, but don't fail if it doesn't exist
         try {
           await axios.delete(`http://127.0.0.1:5000/user_schedule/${Number(user.id)}/${cropName}`);
-        } catch (error) {
-          console.error(`Error deleting schedule for ${cropName}:`, error);
-          // Don't show error toast for schedule deletion as it's not critical
+        } catch (error: any) {
+          // Only log the error if it's not a 404 (schedule not found)
+          if (error.response?.status !== 404) {
+            console.error(`Error deleting schedule for ${cropName}:`, error);
+          }
         }
 
         // Update the local state

@@ -44,12 +44,18 @@ const Recommendations: React.FC = () => {
     setIsLoading(true);
     setShowForm(false);
     try {
-      const response = await fetch('http://127.0.0.1:5000/recommendations', {
+      const response = await fetch('http://127.0.0.1:5000/recommend', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(conditions),
+        body: JSON.stringify({
+          location: conditions.location.city || 'Unknown',
+          sunlight: conditions.sunlight,
+          water_needs: conditions.waterNeeds,
+          avg_area: conditions.area,
+          include_companions: conditions.wantCompanion,
+        }),
       });
 
       if (!response.ok) {
@@ -57,7 +63,56 @@ const Recommendations: React.FC = () => {
       }
 
       const data = await response.json();
-      setCrops(data);
+      console.log('Received data from backend:', data); // Debug log
+      
+      // Process the crops data to include companion crops
+      const processedCrops = data.map((crop: any) => {
+        const companionCrops = [];
+        if (crop.recommended_info) {
+          if (crop.recommended_info['Companion Crop 1']) {
+            companionCrops.push(crop.recommended_info['Companion Crop 1']);
+          }
+          if (crop.recommended_info['Companion Crop 2']) {
+            companionCrops.push(crop.recommended_info['Companion Crop 2']);
+          }
+        }
+        return {
+          ...crop,
+          companion_crops: companionCrops
+        };
+      });
+      
+      console.log('Processed crops:', processedCrops); // Debug log
+      setCrops(processedCrops);
+
+      // If companion crops are requested, fetch their details
+      if (conditions.wantCompanion) {
+        const companionCropNames = processedCrops.flatMap((crop: any) => crop.companion_crops || []);
+        const uniqueCompanionNames = [...new Set(companionCropNames)];
+        console.log('Unique companion crop names:', uniqueCompanionNames); // Debug log
+        
+        const companionDetails = await Promise.all(
+          uniqueCompanionNames.map(async (name: string) => {
+            try {
+              const response = await fetch(`http://127.0.0.1:5000/crop/${encodeURIComponent(name)}`);
+              if (response.ok) {
+                const data = await response.json();
+                console.log(`Fetched companion crop details for ${name}:`, data); // Debug log
+                return data;
+              }
+              console.warn(`Companion crop not found: ${name}`);
+              return null;
+            } catch (error) {
+              console.error(`Error fetching companion crop ${name}:`, error);
+              return null;
+            }
+          })
+        );
+
+        const validCompanionCrops = companionDetails.filter((crop): crop is Crop => crop !== null);
+        console.log('Valid companion crops:', validCompanionCrops); // Debug log
+        setCompanionCrops(validCompanionCrops);
+      }
     } catch (error) {
       console.error('Error fetching recommendations:', error);
       toast.error('Failed to get recommendations. Please try again.');
@@ -70,6 +125,10 @@ const Recommendations: React.FC = () => {
     try {
       await addCropToGarden(crop.name);
       toast.success(`${crop.name} added to your garden!`);
+      // Only set selectedCrop if it's not already set (i.e., not in companion crops window)
+      if (!selectedCrop) {
+        setSelectedCrop(crop);
+      }
     } catch (error) {
       console.error('Error adding crop to garden:', error);
       toast.error('Failed to add crop to garden. Please try again.');
@@ -142,12 +201,13 @@ const Recommendations: React.FC = () => {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                   {crops.slice(0, visibleCrops).map((crop) => (
-                    <CropCard
-                      key={crop.id}
-                      crop={crop}
-                      onAddToGarden={() => handleAddToGarden(crop)}
-                      onRemoveFromGarden={() => removeCropFromGarden(crop.name)}
-                    />
+                    <div key={crop.id}>
+                      <CropCard
+                        crop={crop}
+                        onAddToGarden={() => handleAddToGarden(crop)}
+                        onRemoveFromGarden={() => removeCropFromGarden(crop.name)}
+                      />
+                    </div>
                   ))}
                 </div>
                 {visibleCrops < crops.length && (
@@ -172,7 +232,7 @@ const Recommendations: React.FC = () => {
       </main>
 
       {/* Hovering Window for Companion Crops */}
-      {selectedCrop && companionCrops.length > 0 && (
+      {selectedCrop && selectedCrop.companion_crops && selectedCrop.companion_crops.length > 0 && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4">
             <div className="flex justify-between items-center mb-4">
@@ -182,14 +242,16 @@ const Recommendations: React.FC = () => {
               </Button>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {companionCrops.map((crop) => (
-                <CropCard
-                  key={crop.id}
-                  crop={crop}
-                  onAddToGarden={() => handleAddToGarden(crop)}
-                  onRemoveFromGarden={() => removeCropFromGarden(crop.name)}
-                />
-              ))}
+              {companionCrops
+                .filter(crop => selectedCrop.companion_crops.includes(crop.name))
+                .map((crop) => (
+                  <CropCard
+                    key={crop.id}
+                    crop={crop}
+                    onAddToGarden={() => handleAddToGarden(crop)}
+                    onRemoveFromGarden={() => removeCropFromGarden(crop.name)}
+                  />
+                ))}
             </div>
           </div>
         </div>
