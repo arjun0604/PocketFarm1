@@ -7,9 +7,13 @@ import { Search, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useGarden } from "@/context/GardenContext"; // Import useGarden
 
+interface CropSearchProps {
+  onRemoveFromGarden?: (cropName: string) => Promise<void>;
+}
+
 const INITIAL_CROPS = ["Tomato", "Lettuce", "Carrot", "Cauliflower", "Coriander", "Potato", "Garlic", "Onion"];
 
-const CropSearch: React.FC = () => {
+const CropSearch: React.FC<CropSearchProps> = ({ onRemoveFromGarden }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Crop[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -129,7 +133,7 @@ const CropSearch: React.FC = () => {
               <CropCard
                 key={crop.id}
                 crop={crop}
-                onRemoveFromGarden={() => removeCropFromGarden(crop.name)} // Pass the removal function
+                onRemoveFromGarden={onRemoveFromGarden}
               />
             ))}
           </div>

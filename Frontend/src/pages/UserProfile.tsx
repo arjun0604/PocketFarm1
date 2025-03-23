@@ -5,10 +5,19 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Home, Search, MapPin, Droplets, User, Phone, Mail, MapPinIcon, History } from 'lucide-react';
+import { Home, Search, MapPin, Droplets, User, Phone, Mail, MapPinIcon, History, Trophy } from 'lucide-react';
 import { getUserLocation } from '@/utils/locationUtils';
 import { toast } from 'sonner';
-import { useGarden } from '@/context/GardenContext'; // Import useGarden
+import { useGarden } from '@/context/GardenContext';
+import BottomNavigation from '@/components/BottomNavigation';
+import { Crop } from '@/utils/types/cropTypes';
+import axios from 'axios';
+import { format } from 'date-fns';
+import Header from '@/components/Header';
+
+interface CompletedCrop extends Crop {
+  completedDate: string;
+}
 
 const UserProfile: React.FC = () => {
   const { user, isAuthenticated, updateUserProfile, logout } = useAuth();
@@ -16,7 +25,9 @@ const UserProfile: React.FC = () => {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [isEditing, setIsEditing] = useState(false);
-  const { userCrops } = useGarden(); // Use the garden context
+  const { userCrops } = useGarden();
+  const [cropDetails, setCropDetails] = useState<Crop[]>([]);
+  const [completedCrops, setCompletedCrops] = useState<CompletedCrop[]>([]);
   const location = getUserLocation();
   
   useEffect(() => {
@@ -26,6 +37,72 @@ const UserProfile: React.FC = () => {
       setPhone(user.phone || '');
     }
   }, [user]);
+
+  useEffect(() => {
+    const fetchCropDetails = async () => {
+      try {
+        const cropDetailsPromises = userCrops.map(async (cropName) => {
+          const response = await axios.get(`http://127.0.0.1:5000/crop/${encodeURIComponent(cropName)}`);
+          return response.data;
+        });
+
+        const crops = await Promise.all(cropDetailsPromises);
+        setCropDetails(crops);
+
+        // Check for completed crops
+        const completedCropsPromises = crops.map(async (crop) => {
+          try {
+            const scheduleResponse = await axios.get(`http://127.0.0.1:5000/user_schedule/${user?.id}/${crop.name}`);
+            const schedule = scheduleResponse.data;
+            
+            if (schedule && schedule.last_watered) {
+              const lastWateredDate = new Date(schedule.last_watered);
+              const growingTime = crop.recommended_info['Avg Area'] * 7; // Convert area to days
+              const completionDate = new Date(lastWateredDate.getTime() + growingTime * 24 * 60 * 60 * 1000);
+              
+              if (completionDate < new Date()) {
+                return {
+                  ...crop,
+                  completedDate: completionDate.toISOString()
+                };
+              }
+            }
+            return null;
+          } catch (error) {
+            console.error(`Error checking completion for ${crop.name}:`, error);
+            return null;
+          }
+        });
+
+        const completed = (await Promise.all(completedCropsPromises)).filter((crop): crop is CompletedCrop => crop !== null);
+        setCompletedCrops(completed);
+
+        // Show celebration message for newly completed crops
+        const newCompletedCrops = completed.filter(crop => {
+          const completionDate = new Date(crop.completedDate);
+          const oneDayAgo = new Date();
+          oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+          return completionDate > oneDayAgo;
+        });
+
+        if (newCompletedCrops.length > 0) {
+          toast.success(
+            `🎉 Congratulations! Your ${newCompletedCrops.map(crop => crop.name).join(', ')} ${newCompletedCrops.length === 1 ? 'has' : 'have'} finished growing!`,
+            {
+              duration: 5000,
+            }
+          );
+        }
+      } catch (error) {
+        console.error('Error fetching crop details:', error);
+        toast.error('Failed to load crop details. Please try again.');
+      }
+    };
+
+    if (userCrops.length > 0) {
+      fetchCropDetails();
+    }
+  }, [userCrops, user?.id]);
   
   if (!isAuthenticated) {
     return <Navigate to="/" />;
@@ -49,12 +126,7 @@ const UserProfile: React.FC = () => {
   
   return (
     <div className="min-h-screen bg-gray-50 pb-16">
-      {/* Top nav */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-3">
-          <h1 className="text-lg font-medium">User Profile</h1>
-        </div>
-      </header>
+      <Header title="User Profile" />
       
       <main className="container mx-auto px-4 py-6">
         <div className="grid gap-6">
@@ -179,27 +251,30 @@ const UserProfile: React.FC = () => {
                 Crop History
               </CardTitle>
               <CardDescription>
-                Crops you've selected or are growing
+                Your successfully harvested crops
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {userCrops.length > 0 ? (
+              {completedCrops.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {userCrops.map((crop) => (
-                    <div key={crop.name} className="flex items-center gap-3 p-3 border rounded-md">
-                      <div className="h-10 w-10 bg-pocketfarm-light rounded-full flex items-center justify-center">
-                        <Droplets className="h-5 w-5 text-pocketfarm-primary" />
+                  {completedCrops.map((crop) => (
+                    <div key={crop.id} className="flex items-center gap-3 p-3 border rounded-md bg-green-50">
+                      <div className="h-10 w-10 bg-green-100 rounded-full flex items-center justify-center">
+                        <Trophy className="h-5 w-5 text-green-600" />
                       </div>
                       <div>
                         <h3 className="font-medium">{crop.name}</h3>
-                        <p className="text-sm text-pocketfarm-gray">{crop.waterNeeds} water needs, {crop.sunlight} sun</p>
+                        <p className="text-sm text-green-600">
+                          Harvested on {format(new Date(crop.completedDate), 'MMM dd, yyyy')}
+                        </p>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
                 <div className="text-center py-6">
-                  <p className="mb-2">You haven't selected any crops yet</p>
+                  <p className="mb-2">No completed crops yet</p>
+                  <p className="text-sm text-pocketfarm-gray mb-4">Your crops will appear here once they're ready to harvest</p>
                   <Button asChild>
                     <Link to="/crop-library">Browse Crops</Link>
                   </Button>
@@ -207,30 +282,46 @@ const UserProfile: React.FC = () => {
               )}
             </CardContent>
           </Card>
+          
+          {/* My Garden */}
+          <Card>
+            <CardHeader>
+              <CardTitle>My Garden</CardTitle>
+              <CardDescription>Your current garden crops</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {cropDetails.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {cropDetails.map((crop) => (
+                    <div key={crop.id} className="flex items-center space-x-2">
+                      <img
+                        src={crop.imageURL}
+                        alt={crop.name}
+                        className="w-12 h-12 rounded-full object-cover"
+                      />
+                      <div>
+                        <h3 className="font-medium">{crop.name}</h3>
+                        <p className="text-sm text-pocketfarm-gray">
+                          {crop.waterNeeds} water • {crop.sunlight} sun
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-pocketfarm-gray">No crops in your garden yet</p>
+              )}
+            </CardContent>
+            <CardFooter>
+              <Link to="/my-garden" className="w-full">
+                <Button className="w-full">View Full Garden</Button>
+              </Link>
+            </CardFooter>
+          </Card>
         </div>
       </main>
       
-      {/* Bottom nav */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-10">
-        <div className="container mx-auto flex items-center justify-around py-2">
-          <Link to="/dashboard" className="flex flex-col items-center p-2 text-pocketfarm-gray">
-            <Home className="h-5 w-5" />
-            <span className="text-xs mt-1">Home</span>
-          </Link>
-          <Link to="/recommendations" className="flex flex-col items-center p-2 text-pocketfarm-gray">
-            <Search className="h-5 w-5" />
-            <span className="text-xs mt-1">Find Crops</span>
-          </Link>
-          <Link to="/nursery-finder" className="flex flex-col items-center p-2 text-pocketfarm-gray">
-            <MapPin className="h-5 w-5" />
-            <span className="text-xs mt-1">Nurseries</span>
-          </Link>
-          <Link to="/crop-library" className="flex flex-col items-center p-2 text-pocketfarm-gray">
-            <Droplets className="h-5 w-5" />
-            <span className="text-xs mt-1">Crops</span>
-          </Link>
-        </div>
-      </nav>
+      <BottomNavigation />
     </div>
   );
 };

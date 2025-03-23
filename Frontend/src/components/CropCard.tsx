@@ -2,11 +2,14 @@ import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Sun, Droplets, Clock, CalendarDays, Info, ChevronDown, ChevronUp } from 'lucide-react';
+import { Sun, Droplets, Clock, CalendarDays, Info, ChevronDown, ChevronUp, Calendar as CalendarIcon } from 'lucide-react';
 import { Crop } from '@/utils/types/cropTypes';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import { useGarden } from '@/context/GardenContext';
+import { useQuery } from '@tanstack/react-query';
+import axios from 'axios';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 interface CropCardProps {
   crop: Crop;
@@ -14,7 +17,9 @@ interface CropCardProps {
   selected?: boolean;
   onSelectCompanion?: (companionCropNames: string[]) => void;
   onAddToGarden?: () => Promise<void>;
-  onRemoveFromGarden?: () => Promise<void>;
+  onRemoveFromGarden?: (cropName: string) => Promise<void>;
+  onScheduleClick?: () => void;
+  hasSchedule?: boolean;
 }
 
 const CropCard: React.FC<CropCardProps> = ({ 
@@ -23,7 +28,9 @@ const CropCard: React.FC<CropCardProps> = ({
   selected = false, 
   onSelectCompanion,
   onAddToGarden,
-  onRemoveFromGarden
+  onRemoveFromGarden,
+  onScheduleClick,
+  hasSchedule = false
 }) => {
   const [showMore, setShowMore] = useState(false);
   const { user } = useAuth();
@@ -60,7 +67,7 @@ const CropCard: React.FC<CropCardProps> = ({
 
   const handleRemoveFromGarden = async () => {
     if (onRemoveFromGarden) {
-      await onRemoveFromGarden();
+      await onRemoveFromGarden(crop.name);
     } else {
       try {
         if (!user?.id) {
@@ -81,8 +88,8 @@ const CropCard: React.FC<CropCardProps> = ({
   };
 
   const handleCompanionCropClick = () => {
-    if (crop.companionPlants && crop.companionPlants.length > 0 && onSelectCompanion) {
-      onSelectCompanion(crop.companionPlants); // Pass companion plant names to parent component
+    if (crop.companion_crops && crop.companion_crops.length > 0 && onSelectCompanion) {
+      onSelectCompanion(crop.companion_crops);
     }
   };
 
@@ -126,27 +133,43 @@ const CropCard: React.FC<CropCardProps> = ({
           <span>Harvest: {crop.planting_info}</span>
         </div>
 
-        {crop.companionPlants && crop.companionPlants.length > 0 && (
+        {crop.companion_crops && crop.companion_crops.length > 0 && (
           <div className="text-xs">
             <span className="font-medium">Companion plants: </span>
             <button
               onClick={handleCompanionCropClick}
               className="text-pocketfarm-primary hover:underline"
             >
-              {crop.companionPlants.join(', ')}
+              {crop.companion_crops.join(', ')}
             </button>
           </div>
         )}
 
         {/* Show More Details */}
-        <Button
-          variant="ghost"
-          className="mt-2 text-pocketfarm-primary flex items-center gap-1 text-sm"
-          onClick={() => setShowMore(!showMore)}
-        >
-          {showMore ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-          {showMore ? "Show Less" : "Show More"}
-        </Button>
+        <div className="flex items-center justify-between mt-2">
+          <Button
+            variant="ghost"
+            className="text-pocketfarm-primary flex items-center gap-1 text-sm"
+            onClick={() => setShowMore(!showMore)}
+          >
+            {showMore ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            {showMore ? "Show Less" : "Show More"}
+          </Button>
+          {isInGarden && hasSchedule && (
+            <Button
+              variant="ghost"
+              className="text-pocketfarm-primary flex items-center gap-1 text-sm"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onScheduleClick?.();
+              }}
+            >
+              <CalendarIcon className="h-4 w-4" />
+              Schedule
+            </Button>
+          )}
+        </div>
 
         {showMore && (
           <div className="mt-3 p-2 bg-gray-100 rounded-lg text-xs space-y-2">
@@ -159,23 +182,31 @@ const CropCard: React.FC<CropCardProps> = ({
         )}
       </CardContent>
 
-      <CardFooter className="mt-auto">
-        {isInGarden ? (
-          <Button 
-            variant="outline"
-            className="w-full bg-red-500 text-white hover:bg-red-600" // Red button for removal
-            onClick={handleRemoveFromGarden} // Trigger removal function
-          >
-            Remove from Garden
-          </Button>
-        ) : (
-          <Button 
-            className="w-full bg-pocketfarm-primary hover:bg-pocketfarm-dark"
-            onClick={handleAddToGarden}
-          >
-            Add to My Garden
-          </Button>
-        )}
+      <CardFooter className="mt-auto space-y-2">
+        <div className="w-full flex justify-center">
+          {isInGarden ? (
+            <Button
+              variant="outline"
+              className="w-full bg-red-500 text-white hover:bg-red-600"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleRemoveFromGarden();
+              }}
+            >
+              Remove from Garden
+            </Button>
+          ) : (
+            <Button
+              className="w-full bg-pocketfarm-primary hover:bg-pocketfarm-dark"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleAddToGarden();
+              }}
+            >
+              Add to My Garden
+            </Button>
+          )}
+        </div>
       </CardFooter>
     </Card>
   );

@@ -23,6 +23,35 @@ API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
 if not API_KEY:
     raise ValueError("OpenWeatherMap API key is missing. Set OPENWEATHERMAP_API_KEY in .env file.")
 
+# Add these constants after the API_KEY definition
+WEATHER_ALERT_THRESHOLDS = {
+    'heavy_rain': {
+        'condition': 'Rain',
+        'threshold': 10,  # mm/hour
+        'message': 'Heavy rain alert! Consider protecting your plants.'
+    },
+    'strong_wind': {
+        'condition': 'Wind',
+        'threshold': 30,  # km/h
+        'message': 'Strong winds detected! Secure your plants.'
+    },
+    'high_temperature': {
+        'condition': 'Temperature',
+        'threshold': 35,  # Celsius
+        'message': 'High temperature alert! Ensure proper watering.'
+    },
+    'low_temperature': {
+        'condition': 'Temperature',
+        'threshold': 5,  # Celsius
+        'message': 'Low temperature alert! Protect sensitive plants.'
+    },
+    'high_humidity': {
+        'condition': 'Humidity',
+        'threshold': 85,  # percentage
+        'message': 'High humidity alert! Watch for fungal diseases.'
+    }
+}
+
 def get_weather_data(location):
     """Fetch weather data from OpenWeatherMap API with fallback for unavailable locations."""
     if not API_KEY:
@@ -68,20 +97,91 @@ def get_weather_alerts(location):
         print(f"Error fetching weather data: {e}")
         return None
 
+def check_weather_alerts(weather_data):
+    """Check weather conditions against thresholds and return alerts."""
+    alerts = []
+    
+    # Extract weather data
+    temp = weather_data['main']['temp']
+    humidity = weather_data['main']['humidity']
+    wind_speed = weather_data['wind']['speed']
+    weather_condition = weather_data['weather'][0]['main']
+    
+    # Check each threshold
+    for alert_type, threshold_data in WEATHER_ALERT_THRESHOLDS.items():
+        if threshold_data['condition'] == 'Temperature':
+            if temp >= threshold_data['threshold']:
+                alerts.append({
+                    'type': 'high_temperature',
+                    'message': threshold_data['message'],
+                    'value': temp
+                })
+            elif temp <= threshold_data['threshold']:
+                alerts.append({
+                    'type': 'low_temperature',
+                    'message': threshold_data['message'],
+                    'value': temp
+                })
+        elif threshold_data['condition'] == 'Humidity':
+            if humidity >= threshold_data['threshold']:
+                alerts.append({
+                    'type': 'high_humidity',
+                    'message': threshold_data['message'],
+                    'value': humidity
+                })
+        elif threshold_data['condition'] == 'Wind':
+            if wind_speed >= threshold_data['threshold']:
+                alerts.append({
+                    'type': 'strong_wind',
+                    'message': threshold_data['message'],
+                    'value': wind_speed
+                })
+        elif threshold_data['condition'] == 'Rain':
+            if weather_condition == 'Rain':
+                # Note: OpenWeatherMap free API doesn't provide rain volume
+                alerts.append({
+                    'type': 'heavy_rain',
+                    'message': threshold_data['message'],
+                    'value': weather_condition
+                })
+    
+    return alerts
+
 def fetch_weather_alerts():
-    """Background thread to fetch and emit weather data (no alerts in free plan)."""
+    """Background thread to fetch and emit weather data and alerts."""
     if not API_KEY:
         print("OpenWeatherMap API key is missing.")
         return
 
-    # Example location coordinates for Kochi, India
-    location = {'lat': 9.9312, 'lon': 76.2673}
     while True:
-        weather_data = get_weather_alerts(location)
-        if weather_data:
-            # Emit general weather data instead of alerts
-            socketio.emit('weather_update', weather_data)
-        time.sleep(600)  # Check every 10 minutes
+        # Get all users from the database
+        conn = sqlite3.connect('PocketFarm.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, location_latitude, location_longitude FROM users")
+        users = cursor.fetchall()
+        conn.close()
+
+        for user in users:
+            user_id, lat, lon = user
+            location = {'lat': lat, 'lon': lon}
+            
+            weather_data = get_weather_alerts(location)
+            if weather_data:
+                # Check for weather alerts
+                alerts = check_weather_alerts(weather_data)
+                
+                # Emit both weather data and alerts to specific user
+                socketio.emit('weather_update', {
+                    'weather_data': weather_data,
+                    'alerts': alerts,
+                    'user_id': user_id
+                }, room=f'user_{user_id}')
+                
+                # If there are alerts, emit them separately for immediate notification
+                if alerts:
+                    socketio.emit('weather_alert', alerts, room=f'user_{user_id}')
+        
+        time.sleep(1800)  # Check every 30 minutes
 
 @lru_cache(maxsize=1000)
 def cached_geocode(latitude, longitude, service="openweathermap"):
@@ -211,9 +311,9 @@ def predict():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
 @app.route('/recommend', methods=['POST'])
 def recommend():
-    """Recommend crops based on location and weather data."""
     try:
         data = request.get_json()
         
@@ -270,7 +370,7 @@ def recommend():
                     'recommended_info': crop
                 }
 
-                # Fetch companion crop details if requested
+                # Fetch companion crop names if requested
                 if include_companions:
                     companion_crops = []
                     companion_crop_1 = crop['Companion Crop 1']
@@ -278,16 +378,7 @@ def recommend():
 
                     for companion in [companion_crop_1, companion_crop_2]:
                         if companion:
-                            cursor.execute("SELECT * FROM crops WHERE name = ?", (companion,))
-                            companion_details = cursor.fetchone()
-                            if companion_details:
-                                companion_info = {
-                                    'name': companion_details[1],
-                                    'growing_conditions': companion_details[6],
-                                    'water_needs': companion_details[9],
-                                    'sunlight': companion_details[8]
-                                }
-                                companion_crops.append(companion_info)
+                            companion_crops.append(companion)
 
                     detailed_info['companion_crops'] = companion_crops
 
@@ -299,6 +390,8 @@ def recommend():
         return jsonify({'error': f'Missing feature: {str(e)}'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+    
 
 @app.route('/crop/<crop_name>', methods=['GET'])
 def get_crop_details(crop_name):
@@ -477,7 +570,7 @@ def login():
     try:
         data = request.get_json()
         email = data.get('email')
-        password = data.get('password')  # Plain text password from the frontend
+        password = data.get('password')
 
         if not email or not password:
             return jsonify({'error': 'Missing required fields: email or password'}), 400
@@ -497,6 +590,9 @@ def login():
         if not bcrypt.checkpw(password.encode('utf-8'), hashed_password):
             return jsonify({'error': 'Invalid password'}), 401
 
+        # Join the user's socket room for weather updates
+        socketio.emit('join_room', {'room': f'user_{user[0]}'})
+
         # Return the user data including location
         return jsonify({
             'id': user[0],
@@ -513,6 +609,18 @@ def login():
         }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@socketio.on('join_room')
+def on_join(data):
+    """Handle socket room joining."""
+    room = data['room']
+    join_room(room)
+    print(f"Client joined room: {room}")
+
+@socketio.on('disconnect')
+def on_disconnect():
+    """Handle socket disconnection."""
+    print("Client disconnected")
 
 @app.route('/weather', methods=['POST'])
 def get_weather():

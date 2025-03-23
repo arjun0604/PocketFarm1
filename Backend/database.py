@@ -8,7 +8,7 @@ cursor = conn.cursor()
 # Drop the crops table if it exists
 cursor.execute('DROP TABLE IF EXISTS crops')
 
-# Create the crops table (unchanged from the original)
+# Create the crops table
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS crops (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS watering_schedules (
     crop_id INTEGER NOT NULL,
     last_watered DATE,
     next_watering DATE,
-    watering_frequency TEXT,
+    watering_frequency INTEGER,  
+    fertilization_schedule INTEGER,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (crop_id) REFERENCES crops(id) ON DELETE CASCADE
 )
@@ -72,6 +73,7 @@ CREATE TABLE IF NOT EXISTS users (
     location_latitude REAL,
     location_longitude REAL,
     notification_enabled BOOLEAN DEFAULT 1,
+    last_alert_check TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 ''')
@@ -116,7 +118,21 @@ CREATE TABLE IF NOT EXISTS weather_alerts (
     alert_type TEXT NOT NULL,
     alert_message TEXT NOT NULL,
     alert_date DATE NOT NULL,
+    alert_status TEXT DEFAULT 'pending',
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+)
+''')
+
+# Drop the crop_schedule table if it exists
+cursor.execute('DROP TABLE IF EXISTS crop_schedule')
+
+# Create the crop_schedule table to store numerical crop schedules
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS crop_schedule (
+    crop_name TEXT PRIMARY KEY,
+    growing_time INTEGER,
+    watering_frequency INTEGER,
+    fertilization_schedule INTEGER
 )
 ''')
 
@@ -124,10 +140,14 @@ CREATE TABLE IF NOT EXISTS weather_alerts (
 conn.commit()
 
 # Load the CSV file into a DataFrame
-df = pd.read_csv('cropdata.csv')  # Ensure this file is in the same directory or provide the correct path
+df_crops = pd.read_csv('cropdata.csv')  # Ensure this file is in the same directory or provide the correct path
+df_schedule = pd.read_csv('crop_schedule_numerical.csv')  # Load the new numerical schedule CSV
 
 # Insert data into the crops table
-df.to_sql('crops', conn, if_exists='append', index=False)
+df_crops.to_sql('crops', conn, if_exists='append', index=False)
+
+# Insert data into the crop_schedule table
+df_schedule.to_sql('crop_schedule', conn, if_exists='append', index=False)
 
 # Define weather instructions to insert
 weather_instructions = [
@@ -135,6 +155,8 @@ weather_instructions = [
     ("Frost", "Cover plants with cloth or bring them indoors. Water them well."),
     ("Heatwave", "Provide shade for plants and ensure they are well-watered."),
     ("Flood", "Move potted plants to higher ground and ensure drainage."),
+    ("Strong Wind", "Secure plants and structures to prevent damage."),
+    ("Storm", "Bring potted plants indoors and secure garden structures."),
     # Add more instructions as needed
 ]
 

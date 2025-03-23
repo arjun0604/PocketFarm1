@@ -5,6 +5,7 @@ import { Home, Search, MapPin, Droplets } from 'lucide-react';
 import CropSearch from '@/components/CropSearch';
 import { useGarden } from '@/context/GardenContext'; // Import useGarden
 import BottomNavigation from '@/components/BottomNavigation';
+import Header from '@/components/Header';
 
 const CropLibrary: React.FC = () => {
   const { isAuthenticated } = useAuth();
@@ -16,12 +17,7 @@ const CropLibrary: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-16">
-      {/* Top nav */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-3">
-          <h1 className="text-lg font-medium">Crop Library</h1>
-        </div>
-      </header>
+      <Header title="Crop Library" />
       
       <main className="container mx-auto px-4 py-6">
         {/* Pass the onRemoveFromGarden prop to CropSearch */}

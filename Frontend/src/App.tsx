@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/context/AuthContext";
 import { GardenProvider } from "@/context/GardenContext"; // Import the GardenProvider
+import WeatherAlert from "@/components/WeatherAlert";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import Recommendations from "./pages/Recommendations";
@@ -13,6 +14,7 @@ import CropLibrary from "./pages/CropLibrary";
 import UserProfile from "./pages/UserProfile";
 import NotFound from "./pages/NotFound";
 import UserCrops from "./pages/UserCrops"; // Import the new UserCrops component
+import WateringSchedule from "./pages/WateringSchedule";
 
 const queryClient = new QueryClient();
 
@@ -33,9 +35,11 @@ const App = () => (
               <Route path="/profile" element={<UserProfile />} />
               <Route path="/user-crops" element={<UserCrops />} />
               <Route path="/my-garden" element={<UserCrops />} />
+              <Route path="/watering-schedule" element={<WateringSchedule />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>
+          <WeatherAlert />
         </TooltipProvider>
       </GardenProvider>
     </AuthProvider>

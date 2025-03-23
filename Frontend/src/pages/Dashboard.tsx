@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Navigate, Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { useGarden } from '@/context/GardenContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -9,8 +10,17 @@ import { getUserLocation, requestLocationPermission, saveUserLocation, Location 
 import { Crop } from '@/utils/types/cropTypes';
 import { toast } from 'sonner';
 import CropCard from '@/components/CropCard';
-import { useGarden } from '@/context/GardenContext'; // Import useGarden
-import BottomNavigation from '@/components/BottomNavigation'; // Import BottomNavigation
+import { useQuery } from '@tanstack/react-query';
+import axios from 'axios';
+import BottomNavigation from '@/components/BottomNavigation';
+import Header from '@/components/Header';
+
+interface Notification {
+  id: number;
+  message: string;
+  timestamp: string;
+  read: boolean;
+}
 
 const Dashboard: React.FC = () => {
   const { user, isAuthenticated, logout } = useAuth();
@@ -21,8 +31,31 @@ const Dashboard: React.FC = () => {
     icon: '' 
   });
   const [isLoadingLocation, setIsLoadingLocation] = useState(false);
-  const { userCrops } = useGarden(); // Use the garden context
-  const [cropDetails, setCropDetails] = useState<Crop[]>([]); // Store detailed crop information
+  const { userCrops } = useGarden();
+  const [cropDetails, setCropDetails] = useState<Crop[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+
+  // Fetch notifications
+  const { data: userNotifications } = useQuery({
+    queryKey: ['userNotifications', user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      try {
+        const response = await axios.get(`http://127.0.0.1:5000/notifications/${Number(user.id)}`);
+        return response.data;
+      } catch (error) {
+        console.error('Error fetching notifications:', error);
+        return [];
+      }
+    },
+    enabled: !!user,
+  });
+
+  useEffect(() => {
+    if (userNotifications) {
+      setNotifications(userNotifications);
+    }
+  }, [userNotifications]);
 
   // Fetch crop details for the user's garden crops
   useEffect(() => {
@@ -141,29 +174,10 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Top nav */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-3 flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <div className="bg-pocketfarm-primary rounded-full p-1">
-              <Home className="h-5 w-5 text-white" />
-            </div>
-            <h1 className="text-lg font-medium">PocketFarm</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" className="text-pocketfarm-gray" onClick={scheduleNotification}>
-              <Bell className="h-5 w-5" />
-            </Button>
-            <Link to="/profile" className="text-pocketfarm-primary">
-              <User className="h-5 w-5" />
-            </Link>
-            <Button variant="ghost" size="icon" className="text-pocketfarm-gray" onClick={() => logout()}>
-              <LogOut className="h-5 w-5" />
-            </Button>
-          </div>
-        </div>
-      </header>
-
+      <Header 
+        title="PocketFarm" 
+        notifications={notifications}
+      />
       <main className="container mx-auto px-4 py-6 space-y-6">
         {/* Greeting */}
         <div className="flex justify-between items-start">
