@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Bell, LogOut, User, ChevronLeft } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { format } from 'date-fns';
+import axios from 'axios';
+import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
 
 interface Notification {
   id: number;
@@ -26,9 +29,35 @@ const Header: React.FC<HeaderProps> = ({
   onBackClick,
   notifications = [] 
 }) => {
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
+  const navigate = useNavigate();
   const [isNotificationDialogOpen, setIsNotificationDialogOpen] = useState(false);
   const unreadNotifications = notifications.filter(n => !n.read).length;
+  const queryClient = useQueryClient();
+
+  const handleNotificationDialogOpen = async () => {
+    if (user && unreadNotifications > 0) {
+      try {
+        await axios.post(`http://127.0.0.1:5000/mark_notifications_read/${user.id}`);
+        // Invalidate and refetch notifications instead of reloading the page
+        queryClient.invalidateQueries({ queryKey: ['userNotifications', user.id] });
+      } catch (error) {
+        console.error('Error marking notifications as read:', error);
+        toast.error('Failed to mark notifications as read');
+      }
+    }
+    setIsNotificationDialogOpen(true);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      navigate('/');
+    } catch (error) {
+      console.error('Error logging out:', error);
+      toast.error('Failed to log out. Please try again.');
+    }
+  };
 
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
@@ -48,7 +77,7 @@ const Header: React.FC<HeaderProps> = ({
                 variant="ghost" 
                 size="icon" 
                 className="relative"
-                onClick={() => setIsNotificationDialogOpen(true)}
+                onClick={handleNotificationDialogOpen}
               >
                 <Bell className="h-5 w-5" />
                 {unreadNotifications > 0 && (
@@ -61,7 +90,7 @@ const Header: React.FC<HeaderProps> = ({
             <Link to="/profile" className="text-pocketfarm-primary">
               <User className="h-5 w-5" />
             </Link>
-            <Button variant="ghost" size="icon" className="text-pocketfarm-gray" onClick={() => logout()}>
+            <Button variant="ghost" size="icon" className="text-pocketfarm-gray" onClick={handleLogout}>
               <LogOut className="h-5 w-5" />
             </Button>
           </div>
@@ -76,23 +105,43 @@ const Header: React.FC<HeaderProps> = ({
           </DialogHeader>
           <div className="space-y-4 max-h-[60vh] overflow-y-auto">
             {notifications.length > 0 ? (
-              notifications.map((notification) => (
-                <div 
-                  key={notification.id} 
-                  className={`p-4 rounded-lg ${
-                    notification.read ? 'bg-gray-50' : 'bg-blue-50'
-                  }`}
-                >
-                  <p className="text-sm">{notification.message}</p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {format(new Date(notification.timestamp), 'MMM dd, yyyy h:mm a')}
-                  </p>
+              <>
+                <div className="flex justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      if (user) {
+                        try {
+                          await axios.post(`http://127.0.0.1:5000/clear_notifications/${user.id}`);
+                          queryClient.invalidateQueries({ queryKey: ['userNotifications', user.id] });
+                          toast.success('All notifications cleared');
+                        } catch (error) {
+                          console.error('Error clearing notifications:', error);
+                          toast.error('Failed to clear notifications');
+                        }
+                      }
+                    }}
+                  >
+                    Clear All
+                  </Button>
                 </div>
-              ))
+                {notifications.map((notification) => (
+                  <div 
+                    key={notification.id}
+                    className={`p-3 rounded-lg ${
+                      notification.read ? 'bg-gray-50' : 'bg-blue-50'
+                    }`}
+                  >
+                    <p className="text-sm">{notification.message}</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {format(new Date(notification.timestamp), 'MMM dd, yyyy HH:mm')}
+                    </p>
+                  </div>
+                ))}
+              </>
             ) : (
-              <div className="text-center py-4 text-gray-500">
-                No notifications
-              </div>
+              <p className="text-center text-gray-500">No notifications</p>
             )}
           </div>
         </DialogContent>

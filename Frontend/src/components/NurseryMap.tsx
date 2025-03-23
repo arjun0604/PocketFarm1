@@ -55,9 +55,7 @@ const NurseryMap: React.FC<NurseryMapProps> = ({ location }) => {
   const refreshLocation = useCallback(async () => {
     setIsLoading(true);
     try {
-      clearStoredLocation();
-      toast.info('Updating your location...');
-
+      // Don't clear stored location, just update it
       const newLocation = await requestLocationPermission();
       console.log('New location obtained:', newLocation);
 
@@ -66,6 +64,7 @@ const NurseryMap: React.FC<NurseryMapProps> = ({ location }) => {
         longitude: newLocation.longitude
       });
 
+      // Update the location without clearing the stored one
       saveUserLocation(newLocation);
       await fetchNurseries(newLocation.latitude, newLocation.longitude);
 
@@ -73,6 +72,7 @@ const NurseryMap: React.FC<NurseryMapProps> = ({ location }) => {
     } catch (error) {
       console.error('Error updating location:', error);
       toast.error('Failed to update location');
+    } finally {
       setIsLoading(false);
     }
   }, [fetchNurseries]);

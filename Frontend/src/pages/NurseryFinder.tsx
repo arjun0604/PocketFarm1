@@ -1,25 +1,28 @@
 import React, { useEffect, useState } from 'react';
-import { Navigate, Link } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
-import { Home, Search, MapPin, Droplets, User } from 'lucide-react';
-import NurseryMap from '@/components/NurseryMap';
 import { requestLocationPermission, Location } from '@/utils/locationUtils';
 import { toast } from 'sonner';
 import BottomNavigation from '@/components/BottomNavigation';
+import Header from '@/components/Header';
+import NurseryMap from '@/components/NurseryMap';
 
 const NurseryFinder: React.FC = () => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const [userLocation, setUserLocation] = useState<Location | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const loadLocation = async () => {
       try {
-        const location = await requestLocationPermission(); // Uses cached location if available
+        const location = await requestLocationPermission();
         setUserLocation(location);
         toast.info('Finding plant nurseries and garden supplies near you...');
       } catch (error) {
         console.error('[NurseryFinder] Error getting location:', error);
         toast.error('Failed to get your location. Please enable location services or set a location manually.');
+      } finally {
+        setIsLoading(false);
       }
     };
     loadLocation();
@@ -31,20 +34,19 @@ const NurseryFinder: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-16">
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-3 flex justify-between items-center">
-          <h1 className="text-lg font-medium">Plant Nurseries & Garden Centers</h1>
-          <Link to="/profile" className="text-pocketfarm-primary">
-            <User className="h-5 w-5" />
-          </Link>
-        </div>
-      </header>
+      <Header 
+        title="Plant Nurseries & Garden Centers" 
+        showBackButton 
+        onBackClick={() => window.history.back()}
+      />
 
       <main className="container mx-auto px-4 py-6">
-        {userLocation ? (
-          <NurseryMap location={userLocation} />
+        {isLoading ? (
+          <div className="text-center py-12">
+            <p>Loading nursery map...</p>
+          </div>
         ) : (
-          <p>Loading nursery map...</p>
+          <NurseryMap location={userLocation} />
         )}
       </main>
 

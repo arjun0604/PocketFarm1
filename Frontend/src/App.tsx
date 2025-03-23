@@ -15,6 +15,7 @@ import UserProfile from "./pages/UserProfile";
 import NotFound from "./pages/NotFound";
 import UserCrops from "./pages/UserCrops"; // Import the new UserCrops component
 import WateringSchedule from "./pages/WateringSchedule";
+import Users from './pages/Users';
 
 const queryClient = new QueryClient();
 
@@ -36,6 +37,7 @@ const App = () => (
               <Route path="/user-crops" element={<UserCrops />} />
               <Route path="/my-garden" element={<UserCrops />} />
               <Route path="/watering-schedule" element={<WateringSchedule />} />
+              <Route path="/users" element={<Users />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>

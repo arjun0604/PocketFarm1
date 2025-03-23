@@ -9,6 +9,12 @@ export interface Location {
   country?: string;
 }
 
+interface LocationDetails {
+  city: string;
+  state: string;
+  country: string;
+}
+
 // Singleton to cache the last known location in memory
 let cachedLocation: Location | null = null;
 
@@ -103,9 +109,8 @@ export const requestLocationPermission = async (): Promise<Location> => {
   });
 };
 
-export const getLocationDetails = async (latitude: number, longitude: number): Promise<{ city: string; state: string; country: string }> => {
-  console.log('[getLocationDetails] Getting location details for:', { latitude, longitude });
-  
+// Helper function to get location details from coordinates
+export const getLocationDetails = async (latitude: number, longitude: number): Promise<LocationDetails> => {
   try {
     const response = await fetch(`${API_BASE_URL}/geocode`, {
       method: 'POST',
@@ -114,34 +119,31 @@ export const getLocationDetails = async (latitude: number, longitude: number): P
       },
       body: JSON.stringify({ latitude, longitude }),
     });
-    
-    console.log('[getLocationDetails] Fetch response status:', response.status);
+
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to get location details: ${response.status} - ${errorText}`);
+      throw new Error('Failed to get location details');
     }
-    
-    const locationData = await response.json();
-    console.log('[getLocationDetails] Received location data:', locationData);
-    
+
+    const data = await response.json();
     return {
-      city: locationData.city && locationData.city !== 'Unknown City' ? locationData.city : 'Kochi',
-      state: locationData.state && locationData.state !== 'Unknown State' ? locationData.state : 'Kerala',
-      country: locationData.country && locationData.country !== 'Unknown Country' ? locationData.country : 'India',
+      city: data.city,
+      state: data.state,
+      country: data.country,
     };
   } catch (error) {
-    console.error('[getLocationDetails] Error in geocoding:', error);
-    return {
-      city: 'Kochi',
-      state: 'Kerala',
-      country: 'India',
-    };
+    console.error('[getLocationDetails] Error:', error);
+    throw error;
   }
 };
 
 export const saveUserLocation = (location: Location): void => {
-  console.log('[saveUserLocation] Saving user location:', location);
-  localStorage.setItem('pocketfarm_location', JSON.stringify(location));
+  try {
+    localStorage.setItem('pocketfarm_location', JSON.stringify(location));
+    cachedLocation = location; // Update cache
+    console.log('[saveUserLocation] Saved location:', location);
+  } catch (error) {
+    console.error('[saveUserLocation] Error saving location:', error);
+  }
 };
 
 export const getUserLocation = (): Location | null => {
@@ -197,4 +199,6 @@ const initializeLocationCache = () => {
     console.log('[initializeLocationCache] Initialized cache with stored location:', cachedLocation);
   }
 };
+
+// Initialize cache when the module loads
 initializeLocationCache();

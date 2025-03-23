@@ -47,14 +47,20 @@ CREATE TABLE IF NOT EXISTS watering_schedules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     crop_id INTEGER NOT NULL,
-    last_watered DATE,
+    last_watered DATE NULL,
     next_watering DATE,
     watering_frequency INTEGER,  
     fertilization_schedule INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (crop_id) REFERENCES crops(id) ON DELETE CASCADE
+    FOREIGN KEY (crop_id) REFERENCES crops(id) ON DELETE CASCADE,
+    UNIQUE(user_id, crop_id)
 )
 ''')
+
+# Create indexes for better performance
+cursor.execute('CREATE INDEX IF NOT EXISTS idx_watering_schedules_user_id ON watering_schedules(user_id)')
+cursor.execute('CREATE INDEX IF NOT EXISTS idx_watering_schedules_crop_id ON watering_schedules(crop_id)')
 
 # Drop the users table if it exists
 cursor.execute('DROP TABLE IF EXISTS users')
@@ -92,6 +98,10 @@ CREATE TABLE IF NOT EXISTS user_crops (
     UNIQUE(user_id, crop_id)
 )
 ''')
+
+# Create indexes for better performance
+cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_crops_user_id ON user_crops(user_id)')
+cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_crops_crop_id ON user_crops(crop_id)')
 
 # Drop the notification_preferences table if it exists
 cursor.execute('DROP TABLE IF EXISTS notification_preferences')
@@ -135,6 +145,10 @@ CREATE TABLE IF NOT EXISTS crop_schedule (
     fertilization_schedule INTEGER
 )
 ''')
+
+# Create indexes for better performance
+cursor.execute('CREATE INDEX IF NOT EXISTS idx_crops_name ON crops(name)')
+cursor.execute('CREATE INDEX IF NOT EXISTS idx_crop_schedule_crop_name ON crop_schedule(crop_name)')
 
 # Commit the changes
 conn.commit()

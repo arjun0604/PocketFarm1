@@ -52,12 +52,17 @@ const UserProfile: React.FC = () => {
         // Check for completed crops
         const completedCropsPromises = crops.map(async (crop) => {
           try {
-            const scheduleResponse = await axios.get(`http://127.0.0.1:5000/user_schedule/${user?.id}/${crop.name}`);
-            const schedule = scheduleResponse.data;
+            // Get all schedules for the user
+            const scheduleResponse = await axios.get(`http://127.0.0.1:5000/user_schedule/${user?.id}`);
+            const schedules = scheduleResponse.data;
+            
+            // Find the schedule for this crop
+            const schedule = schedules.find((s: any) => s.name === crop.name);
             
             if (schedule && schedule.last_watered) {
               const lastWateredDate = new Date(schedule.last_watered);
-              const growingTime = crop.recommended_info['Avg Area'] * 7; // Convert area to days
+              // Use a default growing time of 60 days if recommended_info is not available
+              const growingTime = crop.recommended_info?.['Avg Area'] ? crop.recommended_info['Avg Area'] * 7 : 60;
               const completionDate = new Date(lastWateredDate.getTime() + growingTime * 24 * 60 * 60 * 1000);
               
               if (completionDate < new Date()) {
