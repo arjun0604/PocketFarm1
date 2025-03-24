@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify, g
 import requests
-import psycopg2
-from psycopg2.extras import DictCursor
+import sqlite3
 from crops import recommend_crops
 from flask_socketio import SocketIO, join_room, emit
 import time
@@ -34,19 +33,15 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Get environment variables for deployment
-PORT = int(os.getenv('PORT', 5000))
-FRONTEND_URL = os.getenv('FRONTEND_URL', 'https://localhost:8080')
-
 # Simple CORS configuration
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'secret!')
+app.config['SECRET_KEY'] = 'secret!'
 app.config['CORS_HEADERS'] = 'Content-Type'
-CORS(app, supports_credentials=True, origins=[FRONTEND_URL, "https://localhost:8080", "http://localhost:8080", 
+CORS(app, supports_credentials=True, origins=["https://localhost:8080", "http://localhost:8080", 
                           "https://127.0.0.1:8080", "http://127.0.0.1:8080"])
 
 # Configure Socket.IO with proper CORS settings
 socketio = SocketIO(app, 
-                   cors_allowed_origins=[FRONTEND_URL, "https://localhost:8080", "http://localhost:8080", 
+                   cors_allowed_origins=["https://localhost:8080", "http://localhost:8080", 
                                        "https://127.0.0.1:8080", "http://127.0.0.1:8080"],
                    logger=True,
                    engineio_logger=True,
@@ -61,7 +56,7 @@ socketio = SocketIO(app,
 # Add CORS headers to all responses
 @app.after_request
 def add_cors_headers(response):
-    response.headers.add('Access-Control-Allow-Origin', FRONTEND_URL)
+    response.headers.add('Access-Control-Allow-Origin', 'https://localhost:8080')
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     response.headers.add('Access-Control-Allow-Credentials', 'true')
@@ -135,22 +130,22 @@ WEATHER_ALERT_THRESHOLDS = {
 def get_db():
     """Get a database connection with proper timeout and error handling."""
     try:
-        # Import this function from database.py to maintain consistency
-        from database import get_db as get_postgres_db
-        return get_postgres_db()
-    except Exception as e:
+        conn = sqlite3.connect('PocketFarm.db', timeout=30)  # Increased timeout to 30 seconds
+        conn.row_factory = sqlite3.Row
+        # Enable WAL mode for better concurrency
+        conn.execute('PRAGMA journal_mode=WAL')
+        # Set busy timeout
+        conn.execute('PRAGMA busy_timeout=30000')  # 30 seconds
+        return conn
+    except sqlite3.Error as e:
         print(f"Database connection error: {str(e)}")
         raise
-
-def get_cursor(conn):
-    """Get a cursor with dictionary factory"""
-    return conn.cursor(cursor_factory=DictCursor)
 
 @app.route('/crop_schedule', methods=['GET'])
 def get_crop_schedule():
     try:
         conn = get_db()
-        cursor = get_cursor(conn)
+        cursor = conn.cursor()
 
         # Fetch all crop schedules
         cursor.execute("SELECT * FROM crop_schedule")
@@ -178,25 +173,25 @@ def create_user_schedule():
             return jsonify({'error': 'Missing required fields: user_id or crop_name'}), 400
 
         conn = get_db()
-        cursor = get_cursor(conn)
+        cursor = conn.cursor()
 
         try:
             # Start transaction
-            conn.autocommit = False
+            cursor.execute('BEGIN TRANSACTION')
 
             # First check if the crop exists in the crops table
-            cursor.execute("SELECT id FROM crops WHERE name = %s", (crop_name,))
+            cursor.execute("SELECT id FROM crops WHERE name = ?", (crop_name,))
             crop = cursor.fetchone()
             if not crop:
-                conn.rollback()
+                cursor.execute('ROLLBACK')
                 conn.close()
                 return jsonify({'error': f'Crop "{crop_name}" not found in the database'}), 404
 
             # Check if the user exists
-            cursor.execute("SELECT id FROM users WHERE id = %s", (user_id,))
+            cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
             user = cursor.fetchone()
             if not user:
-                conn.rollback()
+                cursor.execute('ROLLBACK')
                 conn.close()
                 return jsonify({'error': f'User with id "{user_id}" not found'}), 404
 
@@ -204,11 +199,11 @@ def create_user_schedule():
             cursor.execute('''
                 SELECT ws.id FROM watering_schedules ws
                 JOIN crops c ON ws.crop_id = c.id
-                WHERE ws.user_id = %s AND c.name = %s
+                WHERE ws.user_id = ? AND c.name = ?
             ''', (user_id, crop_name))
             existing_schedule = cursor.fetchone()
             if existing_schedule:
-                conn.commit()
+                cursor.execute('COMMIT')
                 conn.close()
                 return jsonify({'message': 'Schedule already exists for this crop'}), 200
 
@@ -216,12 +211,12 @@ def create_user_schedule():
             cursor.execute('''
                 SELECT growing_time, watering_frequency, fertilization_schedule
                 FROM crop_schedule
-                WHERE crop_name = %s
+                WHERE crop_name = ?
             ''', (crop_name,))
             schedule_data = cursor.fetchone()
             
             if not schedule_data:
-                conn.rollback()
+                cursor.execute('ROLLBACK')
                 conn.close()
                 return jsonify({'error': f'No schedule data found for crop "{crop_name}"'}), 404
 
@@ -235,20 +230,27 @@ def create_user_schedule():
             cursor.execute('''
                 INSERT INTO watering_schedules 
                 (user_id, crop_id, watering_frequency, fertilization_schedule, last_watered, next_watering)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            ''', (user_id, crop['id'], watering_frequency, fertilization_schedule, current_date, next_watering))
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user_id, crop[0], watering_frequency, fertilization_schedule, current_date, next_watering))
 
             # Commit transaction
-            conn.commit()
+            cursor.execute('COMMIT')
             conn.close()
             return jsonify({'message': 'User schedule created successfully!'}), 200
 
-        except Exception as e:
+        except sqlite3.Error as e:
             # Rollback transaction on error
-            conn.rollback()
+            cursor.execute('ROLLBACK')
             conn.close()
             print(f"Database error in create_user_schedule: {str(e)}")
             return jsonify({'error': f'Database error occurred: {str(e)}'}), 500
+        except Exception as e:
+            # Rollback transaction on error
+            cursor.execute('ROLLBACK')
+            conn.close()
+            print(f"Error in create_user_schedule: {str(e)}")
+            return jsonify({'error': str(e)}), 500
+
     except Exception as e:
         print(f"Error in create_user_schedule: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -257,13 +259,13 @@ def create_user_schedule():
 def delete_user_schedule(user_id, crop_name):
     try:
         conn = get_db()
-        cursor = get_cursor(conn)
+        cursor = conn.cursor()
 
         # First check if the schedule exists
         cursor.execute('''
             SELECT ws.id FROM watering_schedules ws
             JOIN crops c ON ws.crop_id = c.id
-            WHERE ws.user_id = %s AND c.name = %s
+            WHERE ws.user_id = ? AND c.name = ?
         ''', (user_id, crop_name))
         schedule = cursor.fetchone()
 
@@ -274,8 +276,8 @@ def delete_user_schedule(user_id, crop_name):
         # Delete the user's watering schedule
         cursor.execute('''
             DELETE FROM watering_schedules
-            WHERE user_id = %s AND crop_id IN (
-                SELECT id FROM crops WHERE name = %s
+            WHERE user_id = ? AND crop_id IN (
+                SELECT id FROM crops WHERE name = ?
             )
         ''', (user_id, crop_name))
         conn.commit()
@@ -305,14 +307,14 @@ def update_watering():
             return jsonify({'error': 'Missing required fields'}), 400
 
         conn = get_db()
-        cursor = get_cursor(conn)
+        cursor = conn.cursor()
 
         # Get the current schedule
         cursor.execute('''
             SELECT ws.id, ws.last_watered, ws.watering_frequency
             FROM watering_schedules ws
             JOIN crops c ON ws.crop_id = c.id
-            WHERE ws.user_id = %s AND c.name = %s
+            WHERE ws.user_id = ? AND c.name = ?
         ''', (user_id, crop_name))
         schedule = cursor.fetchone()
 
@@ -331,8 +333,8 @@ def update_watering():
             # Update the watering schedule with today's date and mark as watered
             cursor.execute('''
                 UPDATE watering_schedules
-                SET last_watered = %s, next_watering = %s, water_status = 1
-                WHERE id = %s
+                SET last_watered = ?, next_watering = ?, water_status = 1
+                WHERE id = ?
             ''', (current_date, next_watering, schedule_id))
             
             # Create a notification for the user
@@ -345,7 +347,7 @@ def update_watering():
             cursor.execute('''
                 UPDATE watering_schedules
                 SET water_status = 0
-                WHERE id = %s
+                WHERE id = ?
             ''', (schedule_id,))
             
             result_message = "Watering status updated."
@@ -419,12 +421,12 @@ def check_weather_alerts(weather_data):
     for alert_type, threshold_data in WEATHER_ALERT_THRESHOLDS.items():
         # Check if enough time has passed since last alert
         conn = get_db()
-        cursor = get_cursor(conn)
+        cursor = conn.cursor()
         
         # First check if user has weather alerts enabled
         cursor.execute("""
             SELECT weather_alerts FROM notification_preferences 
-            WHERE user_id = %s
+            WHERE user_id = ?
         """, (user_id,))
         preferences = cursor.fetchone()
         
@@ -435,7 +437,7 @@ def check_weather_alerts(weather_data):
         # Check if enough time has passed since last alert
         cursor.execute("""
             SELECT timestamp FROM notifications 
-            WHERE message LIKE %s AND user_id = %s
+            WHERE message LIKE ? AND user_id = ?
             ORDER BY timestamp DESC LIMIT 1
         """, (f"%{threshold_data['message']}%", user_id))
         last_alert = cursor.fetchone()
@@ -497,7 +499,7 @@ def fetch_weather_alerts():
         try:
             # Get all users from the database
             conn = get_db()
-            cursor = get_cursor(conn)
+            cursor = conn.cursor()
             cursor.execute("""
                 SELECT u.id, u.location_latitude, u.location_longitude, np.weather_alerts
                 FROM users u
@@ -532,11 +534,11 @@ def fetch_weather_alerts():
                     if alerts:
                         # Create notifications in the database
                         conn = get_db()
-                        cursor = get_cursor(conn)
+                        cursor = conn.cursor()
                         for alert in alerts:
                             cursor.execute("""
                                 INSERT INTO notifications (user_id, message)
-                                VALUES (%s, %s)
+                                VALUES (?, ?)
                             """, (user_id, alert['message']))
                         conn.commit()
                         conn.close()
@@ -628,19 +630,19 @@ def handle_response():
         response = data['response']  # 'yes' or 'no'
 
         # Connect to the database
-        conn = get_db()
-        cursor = get_cursor(conn)
+        conn = sqlite3.connect('PocketFarm.db')
+        cursor = conn.cursor()
 
         current_date = time.strftime('%Y-%m-%d')
 
         if response.lower() == 'yes':
             # Update last watered date and set next watering date (e.g., 7 days later)
             next_watering_date = time.strftime('%Y-%m-%d', time.localtime(time.time() + 7 * 86400))  # 7 days later
-            cursor.execute("UPDATE users SET last_watered_date=?, next_watering_date=? WHERE device_token=%s", 
+            cursor.execute("UPDATE users SET last_watered_date=?, next_watering_date=? WHERE device_token=?", 
                           (current_date, next_watering_date, device_token))
         elif response.lower() == 'no':
             # Set the next watering date to the current date
-            cursor.execute("UPDATE users SET next_watering_date=? WHERE device_token=%s", 
+            cursor.execute("UPDATE users SET next_watering_date=? WHERE device_token=?", 
                           (current_date, device_token))
 
         conn.commit()
@@ -708,8 +710,8 @@ def recommend():
         recommended_crops = recommend_crops(sunlight, water_needs, avg_temp, avg_humidity, area, current_month)
         
         # Connect to the SQLite database
-        conn = get_db()
-        cursor = get_cursor(conn)
+        conn = sqlite3.connect('PocketFarm.db')
+        cursor = conn.cursor()
 
         # Prepare a list to hold crop details
         crops_with_details = []
@@ -717,7 +719,7 @@ def recommend():
         # Fetch details for each recommended crop
         for crop in recommended_crops['Crops']:
             crop_name = crop['Crop']
-            cursor.execute("SELECT * FROM crops WHERE name = %s", (crop_name,))
+            cursor.execute("SELECT * FROM crops WHERE name = ?", (crop_name,))
             crop_details = cursor.fetchone()
             if crop_details:
                 detailed_info = {
@@ -770,21 +772,34 @@ def recommend():
 def get_crop_details(crop_name):
     """Get details for a specific crop."""
     try:
-        conn = get_db()
-        cursor = get_cursor(conn)
+        conn = sqlite3.connect('PocketFarm.db')
+        cursor = conn.cursor()
         crop_name=crop_name.capitalize()
-        
-        # Fetch crop details
-        cursor.execute("SELECT * FROM crops WHERE name = %s", (crop_name,))
+        cursor.execute("SELECT * FROM crops WHERE name = ?", (crop_name,))
         crop = cursor.fetchone()
-        
-        if not crop:
-            return jsonify({'error': 'Crop not found'}), 404
-        
+
         conn.close()
-        return jsonify(dict(crop)), 200
+
+        if crop is None:
+            return jsonify({'error': 'Crop not found.'}), 404
+
+        crop_details = {
+            'id': crop[0],
+            'name': crop[1],
+            'imageURL': crop[2],
+            'scientific_name': crop[3],
+            'description': crop[4],
+            'origin': crop[5],
+            'growing_conditions': crop[6],
+            'planting_info': crop[7],
+            'care_instructions': crop[8],
+            'storage_info': crop[9],
+            'nutritional_info': crop[10],
+            'culinary_info': crop[11]
+        }
+
+        return jsonify(crop_details)
     except Exception as e:
-        print(f"Error getting crop details: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -802,52 +817,59 @@ def add_to_library():
             return jsonify({'error': 'Missing required fields: user_id or crop_name'}), 400
 
         conn = get_db()
-        cursor = get_cursor(conn)
+        cursor = conn.cursor()
 
         try:
             # Start transaction
-            conn.autocommit = False
+            cursor.execute('BEGIN TRANSACTION')
 
-            # First check if the crop exists in the crops table
-            cursor.execute("SELECT id FROM crops WHERE name = %s", (crop_name,))
+            # Check if the crop exists in the crops table
+            cursor.execute("SELECT id FROM crops WHERE name = ?", (crop_name,))
             crop = cursor.fetchone()
             if not crop:
-                conn.rollback()
+                cursor.execute('ROLLBACK')
                 conn.close()
                 return jsonify({'error': f'Crop "{crop_name}" not found in the database'}), 404
 
             # Check if the user exists
-            cursor.execute("SELECT id FROM users WHERE id = %s", (user_id,))
+            cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
             user = cursor.fetchone()
             if not user:
-                conn.rollback()
+                cursor.execute('ROLLBACK')
                 conn.close()
                 return jsonify({'error': f'User with id "{user_id}" not found'}), 404
 
-            # Check if crop already in library
-            cursor.execute("SELECT * FROM user_crops WHERE user_id = %s AND crop_id = %s", (user_id, crop['id']))
-            existing_crop = cursor.fetchone()
-            if existing_crop:
-                conn.commit()
+            # Check if the crop is already in the user's library
+            cursor.execute("SELECT * FROM user_crops WHERE user_id = ? AND crop_id = ?", (user_id, crop[0]))
+            existing_entry = cursor.fetchone()
+            if existing_entry:
+                cursor.execute('COMMIT')
                 conn.close()
-                return jsonify({'message': 'Crop already in library'}), 200
+                return jsonify({'message': 'Crop is already in your library!'}), 200
 
-            # Add crop to user's library
-            cursor.execute("INSERT INTO user_crops (user_id, crop_id) VALUES (%s, %s)", (user_id, crop['id']))
+            # Insert the crop into the user's library
+            cursor.execute("INSERT INTO user_crops (user_id, crop_id) VALUES (?, ?)", (user_id, crop[0]))
 
             # Commit transaction
-            conn.commit()
+            cursor.execute('COMMIT')
             conn.close()
             return jsonify({'message': 'Crop added to library successfully!'}), 200
 
-        except Exception as e:
+        except sqlite3.Error as e:
             # Rollback transaction on error
-            conn.rollback()
+            cursor.execute('ROLLBACK')
             conn.close()
             print(f"Database error in add_to_library: {str(e)}")
-            return jsonify({'error': f'Database error occurred: {str(e)}'}), 500
+            return jsonify({'error': 'Database error occurred'}), 500
+        except Exception as e:
+            # Rollback transaction on error
+            cursor.execute('ROLLBACK')
+            conn.close()
+            print(f"Error in add_to_library: {str(e)}")
+            return jsonify({'error': str(e)}), 500
+
     except Exception as e:
-        print(f"Unexpected error in add_to_library: {str(e)}")
+        print(f"Error in add_to_library: {str(e)}")
         return jsonify({'error': str(e)}), 500
     
 
@@ -862,12 +884,12 @@ def get_user_crops():
         user_id = auth_header.split(' ')[1]  # Extract user_id from the token
 
         # Connect to the database
-        conn = get_db()
-        cursor = get_cursor(conn)
+        conn = sqlite3.connect('PocketFarm.db')
+        cursor = conn.cursor()
 
         # Fetch the crops added by the user
         cursor.execute(
-            "SELECT crops.name FROM user_crops JOIN crops ON user_crops.crop_id = crops.id WHERE user_crops.user_id = %s",
+            "SELECT crops.name FROM user_crops JOIN crops ON user_crops.crop_id = crops.id WHERE user_crops.user_id = ?",
             (user_id,)
         )
         crops = cursor.fetchall()
@@ -877,8 +899,11 @@ def get_user_crops():
         # Format the response
         crop_list = [crop[0] for crop in crops]
         return jsonify(crop_list), 200
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return jsonify({'error': 'Database error occurred'}), 500
     except Exception as e:
-        print(f"Error in get_user_crops: {str(e)}")
+        print(f"Unexpected error: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -926,8 +951,8 @@ def signup():
             
         # Check if email already exists
         conn = get_db()
-        cursor = get_cursor(conn)
-        cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users WHERE email = ?", (email,))
         existing_user = cursor.fetchone()
         if existing_user:
             conn.close()
@@ -985,7 +1010,7 @@ def signup():
 
         # Insert the user into the database with email_verified set to 0 (false)
         cursor.execute(
-            "INSERT INTO users (name, email, password, phone, location_city, location_state, location_country, location_latitude, location_longitude, email_verified) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 0)",
+            "INSERT INTO users (name, email, password, phone, location_city, location_state, location_country, location_latitude, location_longitude, email_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
             (name, email, hashed_password, phone, city, state, country, latitude, longitude)
         )
         user_id = cursor.lastrowid
@@ -996,7 +1021,7 @@ def signup():
         
         # Save token to database
         cursor.execute(
-            "INSERT INTO verification_tokens (user_id, token, expires_at) VALUES (%s, %s, %s)",
+            "INSERT INTO verification_tokens (user_id, token, expires_at) VALUES (?, ?, ?)",
             (user_id, verification_token, expires_at)
         )
         
@@ -1047,8 +1072,8 @@ def login():
 
         # Fetch the user from the database
         conn = get_db()
-        cursor = get_cursor(conn)
-        cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
         user = cursor.fetchone()
         conn.close()
 
@@ -1136,44 +1161,46 @@ def get_weather():
 def remove_from_garden():
     try:
         data = request.get_json()
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-
         user_id = data.get('user_id')
         crop_name = data.get('crop_name')
 
         if not user_id or not crop_name:
             return jsonify({'error': 'Missing required fields: user_id or crop_name'}), 400
 
-        conn = get_db()
-        cursor = get_cursor(conn)
+        # Connect to the database
+        conn = sqlite3.connect('PocketFarm.db')
+        cursor = conn.cursor()
 
-        # First check if the crop exists in the crops table
-        cursor.execute("SELECT id FROM crops WHERE name = %s", (crop_name,))
+        # Fetch the crop ID
+        cursor.execute("SELECT id FROM crops WHERE name = ?", (crop_name,))
         crop = cursor.fetchone()
         if not crop:
             conn.close()
             return jsonify({'error': f'Crop "{crop_name}" not found in the database'}), 404
 
-        # Delete from user_crops
-        cursor.execute("DELETE FROM user_crops WHERE user_id = %s AND crop_id = %s", (user_id, crop['id']))
-
+        # Delete the crop from the user's garden
+        cursor.execute("DELETE FROM user_crops WHERE user_id = ? AND crop_id = ?", (user_id, crop[0]))
         conn.commit()
         conn.close()
+
         return jsonify({'message': 'Crop removed from garden successfully!'}), 200
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return jsonify({'error': 'Database error occurred'}), 500
     except Exception as e:
-        print(f"Error deleting crop: {str(e)}")
-        return jsonify({'error': 'Failed to remove crop from garden'}), 500
+        print(f"Unexpected error: {e}")
+        return jsonify({'error': str(e)}), 500   
+    
 
 @app.route('/user_schedule/<int:user_id>', methods=['GET'])
 def get_user_schedules(user_id):
     try:
         print(f"Fetching schedules for user {user_id}")  # Debug log
         conn = get_db()
-        cursor = get_cursor(conn)
+        cursor = conn.cursor()
 
         # First check if the user exists
-        cursor.execute("SELECT id FROM users WHERE id = %s", (user_id,))
+        cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
         user = cursor.fetchone()
         if not user:
             print(f"User {user_id} not found")  # Debug log
@@ -1182,7 +1209,7 @@ def get_user_schedules(user_id):
 
         # Check if user has any schedules
         cursor.execute('''
-            SELECT COUNT(*) FROM watering_schedules WHERE user_id = %s
+            SELECT COUNT(*) FROM watering_schedules WHERE user_id = ?
         ''', (user_id,))
         schedule_count = cursor.fetchone()[0]
         print(f"Found {schedule_count} schedules for user {user_id}")  # Debug log
@@ -1201,7 +1228,7 @@ def get_user_schedules(user_id):
             FROM watering_schedules ws
             JOIN crops c ON ws.crop_id = c.id
             JOIN crop_schedule cs ON c.name = cs.crop_name
-            WHERE ws.user_id = %s
+            WHERE ws.user_id = ?
         ''', (user_id,))
         schedules = cursor.fetchall()
         print(f"Successfully fetched {len(schedules)} schedules")  # Debug log
@@ -1211,6 +1238,9 @@ def get_user_schedules(user_id):
         # Format the response
         schedule_list = [dict(schedule) for schedule in schedules]
         return jsonify(schedule_list), 200
+    except sqlite3.Error as e:
+        print(f"Database error in get_user_schedules: {str(e)}")  # Debug log
+        return jsonify({'error': f'Database error: {str(e)}'}), 500
     except Exception as e:
         print(f"Error in get_user_schedules: {str(e)}")  # Debug log
         return jsonify({'error': str(e)}), 500
@@ -1220,13 +1250,13 @@ def get_user_notifications(user_id):
     try:
         print(f"Fetching notifications for user {user_id}")  # Debug log
         conn = get_db()
-        cursor = get_cursor(conn)
+        cursor = conn.cursor()
 
         # Get notifications from the database
         cursor.execute("""
             SELECT id, message, timestamp, read_status 
             FROM notifications 
-            WHERE user_id = %s 
+            WHERE user_id = ? 
             ORDER BY timestamp DESC
         """, (user_id,))
         notifications = cursor.fetchall()
@@ -1254,14 +1284,22 @@ def create_notification(user_id, message):
     for attempt in range(max_retries):
         try:
             conn = get_db()
-            cursor = get_cursor(conn)
+            cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO notifications (user_id, message)
-                VALUES (%s, %s)
+                VALUES (?, ?)
             """, (user_id, message))
             conn.commit()
             conn.close()
             return
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and attempt < max_retries - 1:
+                print(f"Database locked, retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                print(f"Error creating notification: {str(e)}")
+                raise
         except Exception as e:
             print(f"Error creating notification: {str(e)}")
             raise
@@ -1280,8 +1318,8 @@ def send_verification_email(to_email, verification_token, user_id):
         # Log email credentials (partially hidden)
         logger.info(f"Using email: {email_user}")
         
-        # Create verification link with production URL instead of hardcoded localhost
-        verification_link = f"{FRONTEND_URL}/verify-email?token={verification_token}&email={to_email}"
+        # Create verification link with correct port (8081 instead of 8080)
+        verification_link = f"https://localhost:8081/verify-email?token={verification_token}&user_id={user_id}"
         
         # Email content
         subject = "Verify your PocketFarm account"
@@ -1331,11 +1369,11 @@ def send_verification_email(to_email, verification_token, user_id):
 def mark_notifications_read(user_id):
     try:
         conn = get_db()
-        cursor = get_cursor(conn)
+        cursor = conn.cursor()
         cursor.execute("""
             UPDATE notifications 
             SET read_status = 1 
-            WHERE user_id = %s AND read_status = 0
+            WHERE user_id = ? AND read_status = 0
         """, (user_id,))
         conn.commit()
         conn.close()
@@ -1347,7 +1385,7 @@ def mark_notifications_read(user_id):
 def get_users():
     try:
         conn = get_db()
-        cursor = get_cursor(conn)
+        cursor = conn.cursor()
         cursor.execute("""
             SELECT id, name, email, location_city, location_state, location_country 
             FROM users
@@ -1368,41 +1406,47 @@ def get_users():
 
 @app.route('/verify-email', methods=['GET'])
 def verify_email():
-    """Verify user email with token"""
-    token = request.args.get('token')
-    email = request.args.get('email')
-    
-    if not token or not email:
-        return jsonify({'error': 'Invalid verification link'}), 400
-    
+    """Verify user's email address."""
     try:
+        token = request.args.get('token')
+        user_id = request.args.get('user_id')
+        
+        if not token or not user_id:
+            return jsonify({'error': 'Invalid verification link'}), 400
+            
         conn = get_db()
-        cursor = get_cursor(conn)
+        cursor = conn.cursor()
         
-        # Check if user exists
-        cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
-        user = cursor.fetchone()
+        # Check if the token is valid
+        cursor.execute("""
+            SELECT * FROM verification_tokens 
+            WHERE user_id = ? AND token = ? AND expires_at > datetime('now')
+        """, (user_id, token))
+        verification = cursor.fetchone()
         
-        if not user:
+        if not verification:
             conn.close()
-            return jsonify({'error': 'User not found'}), 404
+            return jsonify({'error': 'Invalid or expired verification link'}), 400
+            
+        # Update user's verification status
+        cursor.execute("""
+            UPDATE users 
+            SET email_verified = 1 
+            WHERE id = ?
+        """, (user_id,))
         
-        # Verify token and update user
-        cursor.execute("UPDATE users SET email_verified = TRUE WHERE id = %s", (user['id'],))
-        
-        # Fetch updated user 
-        cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
-        updated_user = cursor.fetchone()
+        # Delete used token
+        cursor.execute("""
+            DELETE FROM verification_tokens 
+            WHERE user_id = ? AND token = ?
+        """, (user_id, token))
         
         conn.commit()
         conn.close()
         
-        if updated_user and updated_user['email_verified']:
-            return jsonify({'message': 'Email verified successfully!'}), 200
-        else:
-            return jsonify({'error': 'Email verification failed'}), 400
+        return jsonify({'message': 'Email verified successfully!'}), 200
     except Exception as e:
-        print(f"Error in verify_email: {str(e)}")
+        logger.error(f"Email verification error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/resend-verification', methods=['POST'])
@@ -1418,12 +1462,12 @@ def resend_verification():
         logger.info(f"Resending verification email to: {email}")
             
         conn = get_db()
-        cursor = get_cursor(conn)
+        cursor = conn.cursor()
         
         # Check if user exists and is not already verified
         cursor.execute("""
             SELECT id, email_verified FROM users 
-            WHERE email = %s
+            WHERE email = ?
         """, (email,))
         user = cursor.fetchone()
         
@@ -1442,7 +1486,7 @@ def resend_verification():
         # Delete any existing tokens
         cursor.execute("""
             DELETE FROM verification_tokens 
-            WHERE user_id = %s
+            WHERE user_id = ?
         """, (user_id,))
         
         # Generate new verification token
@@ -1452,7 +1496,7 @@ def resend_verification():
         # Save token to database
         cursor.execute("""
             INSERT INTO verification_tokens (user_id, token, expires_at)
-            VALUES (%s, %s, %s)
+            VALUES (?, ?, ?)
         """, (user_id, verification_token, expires_at))
         
         conn.commit()
@@ -1622,8 +1666,8 @@ def get_nurseries():
 def clear_notifications(user_id):
     try:
         conn = get_db()
-        cursor = get_cursor(conn)
-        cursor.execute("DELETE FROM notifications WHERE user_id = %s", (user_id,))
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM notifications WHERE user_id = ?", (user_id,))
         conn.commit()
         conn.close()
         return jsonify({'message': 'All notifications cleared'}), 200
@@ -1634,7 +1678,7 @@ def check_unwatered_crops():
     """Check for unwatered crops and send notifications."""
     try:
         conn = get_db()
-        cursor = get_cursor(conn)
+        cursor = conn.cursor()
         
         # Get all unwatered crops that are due for watering
         cursor.execute('''
@@ -1657,8 +1701,8 @@ def check_unwatered_crops():
             next_watering = (datetime.now() + timedelta(hours=3)).strftime('%Y-%m-%d %H:%M:%S')
             cursor.execute('''
                 UPDATE watering_schedules
-                SET next_watering = %s
-                WHERE id = %s
+                SET next_watering = ?
+                WHERE id = ?
             ''', (next_watering, schedule_id))
         
         conn.commit()
@@ -1676,13 +1720,12 @@ def verify_database_schema():
     """Verify that all required tables exist with correct schema."""
     try:
         conn = get_db()
-        cursor = get_cursor(conn)
+        cursor = conn.cursor()
         
-        # Check if tables exist in PostgreSQL
+        # Check if tables exist
         cursor.execute("""
-            SELECT table_name FROM information_schema.tables 
-            WHERE table_schema='public' AND table_name IN 
-            ('users', 'crops', 'watering_schedules', 'crop_schedule', 'verification_tokens')
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name IN ('users', 'crops', 'watering_schedules', 'crop_schedule', 'verification_tokens')
         """)
         existing_tables = [row[0] for row in cursor.fetchall()]
         
@@ -1693,10 +1736,10 @@ def verify_database_schema():
             logger.info("Creating verification_tokens table...")
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS verification_tokens (
-                    id SERIAL PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
                     token TEXT NOT NULL,
-                    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    expires_at DATETIME NOT NULL,
                     FOREIGN KEY (user_id) REFERENCES users(id)
                 )
             """)
@@ -1704,15 +1747,12 @@ def verify_database_schema():
             missing_tables.remove('verification_tokens')
             
         # Check if users table has email_verified column
-        cursor.execute("""
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_name='users' AND column_name='email_verified'
-        """)
-        email_verified_exists = cursor.fetchone() is not None
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [column[1] for column in cursor.fetchall()]
         
-        if not email_verified_exists:
+        if 'email_verified' not in columns:
             logger.info("Adding email_verified column to users table...")
-            cursor.execute("ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT FALSE")
+            cursor.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0")
             conn.commit()
         
         if missing_tables:
@@ -1722,15 +1762,11 @@ def verify_database_schema():
         # Check table schemas
         for table in required_tables:
             if table in existing_tables:
-                cursor.execute(f"""
-                    SELECT column_name, data_type 
-                    FROM information_schema.columns 
-                    WHERE table_name='{table}'
-                """)
+                cursor.execute(f"PRAGMA table_info({table})")
                 columns = cursor.fetchall()
                 print(f"\n{table} table schema:")
                 for col in columns:
-                    print(f"  {col[0]} ({col[1]})")
+                    print(f"  {col[1]} ({col[2]})")
         
         conn.close()
         return True
@@ -1753,10 +1789,10 @@ def google_auth():
         logger.info(f"Google Auth - Processing for email: {email}")
         
         conn = get_db()
-        cursor = get_cursor(conn)
+        cursor = conn.cursor()
         
         # Check if user exists
-        cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
+        cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
         user = cursor.fetchone()
         
         if not user:
@@ -1772,21 +1808,21 @@ def google_auth():
             longitude = 76.2673
             
             cursor.execute(
-                "INSERT INTO users (name, email, password, location_city, location_state, location_country, location_latitude, location_longitude, email_verified) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1)",
+                "INSERT INTO users (name, email, password, location_city, location_state, location_country, location_latitude, location_longitude, email_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
                 (name, email, hashed_password, city, state, country, latitude, longitude)
             )
             conn.commit()
             
             # Get the newly created user
-            cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
+            cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
             user = cursor.fetchone()
         elif user and len(user) > 10 and user[10] == 0:
             # If user exists but email not verified, mark as verified now
-            cursor.execute("UPDATE users SET email_verified = 1 WHERE id = %s", (user['id'],))
+            cursor.execute("UPDATE users SET email_verified = 1 WHERE id = ?", (user[0],))
             conn.commit()
             
             # Refresh user data
-            cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
+            cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
             user = cursor.fetchone()
             
         conn.close()
@@ -1813,46 +1849,52 @@ def google_auth():
 
 @app.route('/delete_account', methods=['POST'])
 def delete_account():
+    """Delete a user account and all associated data."""
     try:
         data = request.get_json()
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-
         user_id = data.get('user_id')
+        
         if not user_id:
-            return jsonify({'error': 'Missing required field: user_id'}), 400
-
+            return jsonify({'error': 'User ID is required'}), 400
+            
         conn = get_db()
-        cursor = get_cursor(conn)
-        conn.autocommit = False
+        cursor = conn.cursor()
         
         try:
+            # Start transaction for atomicity
+            cursor.execute('BEGIN TRANSACTION')
+            
             # Delete verification tokens
-            cursor.execute("DELETE FROM verification_tokens WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM verification_tokens WHERE user_id = ?", (user_id,))
             
             # Delete notifications
-            cursor.execute("DELETE FROM notifications WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM notifications WHERE user_id = ?", (user_id,))
             
             # Delete watering schedules
-            cursor.execute("DELETE FROM watering_schedules WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM watering_schedules WHERE user_id = ?", (user_id,))
             
             # Delete user crops
-            cursor.execute("DELETE FROM user_crops WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM user_crops WHERE user_id = ?", (user_id,))
             
-            # Delete user
-            cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
+            # Delete user account
+            cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
             
-            conn.commit()
-            conn.close()
-            return jsonify({'message': 'Account deleted successfully'}), 200
+            # Commit all changes
+            cursor.execute('COMMIT')
+            
+            logger.info(f"Account deleted for user ID: {user_id}")
+            return jsonify({'message': 'Account and all associated data have been deleted successfully'}), 200
             
         except Exception as e:
-            conn.rollback()
-            conn.close()
-            print(f"Error during account deletion: {str(e)}")
+            # Rollback in case of error
+            cursor.execute('ROLLBACK')
+            logger.error(f"Error during account deletion: {str(e)}")
             return jsonify({'error': f'Failed to delete account: {str(e)}'}), 500
+        finally:
+            conn.close()
+            
     except Exception as e:
-        print(f"Error processing delete account request: {str(e)}")
+        logger.error(f"Account deletion error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
@@ -1867,9 +1909,5 @@ if __name__ == '__main__':
     # Start the background thread to fetch weather data
     threading.Thread(target=fetch_weather_alerts, daemon=True).start()
     
-    # Run the Flask app with SocketIO - configured for Render deployment
-    is_production = os.getenv('ENVIRONMENT') == 'production'
-    debug_mode = not is_production
-    
-    # In production, Render will set PORT environment variable
-    socketio.run(app, host='0.0.0.0', port=PORT, debug=debug_mode)
+    # Run the Flask app with SocketIO
+    socketio.run(app, debug=True)
