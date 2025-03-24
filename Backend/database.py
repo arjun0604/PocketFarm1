@@ -5,10 +5,7 @@ import pandas as pd
 conn = sqlite3.connect('PocketFarm.db')
 cursor = conn.cursor()
 
-# Drop the crops table if it exists
-cursor.execute('DROP TABLE IF EXISTS crops')
-
-# Create the crops table
+# Create the crops table if it doesn't exist
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS crops (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,10 +23,7 @@ CREATE TABLE IF NOT EXISTS crops (
 )
 ''')
 
-# Drop the weather_instructions table if it exists
-cursor.execute('DROP TABLE IF EXISTS weather_instructions')
-
-# Create the weather_instructions table
+# Create the weather_instructions table if it doesn't exist
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS weather_instructions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,10 +32,7 @@ CREATE TABLE IF NOT EXISTS weather_instructions (
 )
 ''')
 
-# Drop the watering_schedules table if it exists
-cursor.execute('DROP TABLE IF EXISTS watering_schedules')
-
-# Create the watering_schedules table with user_id and crop_id
+# Create the watering_schedules table if it doesn't exist
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS watering_schedules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,6 +42,7 @@ CREATE TABLE IF NOT EXISTS watering_schedules (
     next_watering DATE,
     watering_frequency INTEGER,  
     fertilization_schedule INTEGER,
+    water_status BOOLEAN DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (crop_id) REFERENCES crops(id) ON DELETE CASCADE,
@@ -58,14 +50,28 @@ CREATE TABLE IF NOT EXISTS watering_schedules (
 )
 ''')
 
+# Add water_status column if it doesn't exist
+try:
+    cursor.execute("SELECT water_status FROM watering_schedules LIMIT 1")
+except sqlite3.OperationalError:
+    print("Adding water_status column to watering_schedules table...")
+    cursor.execute('''
+    ALTER TABLE watering_schedules
+    ADD COLUMN water_status BOOLEAN DEFAULT 0
+    ''')
+    conn.commit()
+
 # Create indexes for better performance
 cursor.execute('CREATE INDEX IF NOT EXISTS idx_watering_schedules_user_id ON watering_schedules(user_id)')
 cursor.execute('CREATE INDEX IF NOT EXISTS idx_watering_schedules_crop_id ON watering_schedules(crop_id)')
+cursor.execute('CREATE INDEX IF NOT EXISTS idx_watering_schedules_next_watering ON watering_schedules(next_watering)')
+cursor.execute('CREATE INDEX IF NOT EXISTS idx_watering_schedules_water_status ON watering_schedules(water_status)')
 
-# Drop the users table if it exists
-cursor.execute('DROP TABLE IF EXISTS users')
+# Enable WAL mode for better concurrency
+cursor.execute('PRAGMA journal_mode=WAL')
+cursor.execute('PRAGMA busy_timeout=30000')  # 30 seconds
 
-# Create the users table with updated fields
+# Create the users table if it doesn't exist
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,10 +90,7 @@ CREATE TABLE IF NOT EXISTS users (
 )
 ''')
 
-# Drop the user_crops table if it exists
-cursor.execute('DROP TABLE IF EXISTS user_crops')
-
-# Create the user_crops table to associate users with their crops
+# Create the user_crops table if it doesn't exist
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS user_crops (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,10 +106,7 @@ CREATE TABLE IF NOT EXISTS user_crops (
 cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_crops_user_id ON user_crops(user_id)')
 cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_crops_crop_id ON user_crops(crop_id)')
 
-# Drop the notification_preferences table if it exists
-cursor.execute('DROP TABLE IF EXISTS notification_preferences')
-
-# Create the notification_preferences table
+# Create the notification_preferences table if it doesn't exist
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS notification_preferences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,10 +117,7 @@ CREATE TABLE IF NOT EXISTS notification_preferences (
 )
 ''')
 
-# Drop the weather_alerts table if it exists
-cursor.execute('DROP TABLE IF EXISTS weather_alerts')
-
-# Create the weather_alerts table
+# Create the weather_alerts table if it doesn't exist
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS weather_alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -133,10 +130,7 @@ CREATE TABLE IF NOT EXISTS weather_alerts (
 )
 ''')
 
-# Drop the crop_schedule table if it exists
-cursor.execute('DROP TABLE IF EXISTS crop_schedule')
-
-# Create the crop_schedule table to store numerical crop schedules
+# Create the crop_schedule table if it doesn't exist
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS crop_schedule (
     crop_name TEXT PRIMARY KEY,
@@ -153,31 +147,34 @@ cursor.execute('CREATE INDEX IF NOT EXISTS idx_crop_schedule_crop_name ON crop_s
 # Commit the changes
 conn.commit()
 
-# Load the CSV file into a DataFrame
-df_crops = pd.read_csv('cropdata.csv')  # Ensure this file is in the same directory or provide the correct path
-df_schedule = pd.read_csv('crop_schedule_numerical.csv')  # Load the new numerical schedule CSV
+# Load the CSV file into a DataFrame only if the tables are empty
+cursor.execute("SELECT COUNT(*) FROM crops")
+if cursor.fetchone()[0] == 0:
+    print("Initializing crops data...")
+    df_crops = pd.read_csv('cropdata.csv')
+    df_crops.to_sql('crops', conn, if_exists='append', index=False)
 
-# Insert data into the crops table
-df_crops.to_sql('crops', conn, if_exists='append', index=False)
+cursor.execute("SELECT COUNT(*) FROM crop_schedule")
+if cursor.fetchone()[0] == 0:
+    print("Initializing crop schedule data...")
+    df_schedule = pd.read_csv('crop_schedule_numerical.csv')
+    df_schedule.to_sql('crop_schedule', conn, if_exists='append', index=False)
 
-# Insert data into the crop_schedule table
-df_schedule.to_sql('crop_schedule', conn, if_exists='append', index=False)
+# Define weather instructions to insert only if the table is empty
+cursor.execute("SELECT COUNT(*) FROM weather_instructions")
+if cursor.fetchone()[0] == 0:
+    print("Initializing weather instructions...")
+    weather_instructions = [
+        ("Rain", "Ensure proper drainage in your garden. Cover sensitive plants."),
+        ("Frost", "Cover plants with cloth or bring them indoors. Water them well."),
+        ("Heatwave", "Provide shade for plants and ensure they are well-watered."),
+        ("Flood", "Move potted plants to higher ground and ensure drainage."),
+        ("Strong Wind", "Secure plants and structures to prevent damage."),
+        ("Storm", "Bring potted plants indoors and secure garden structures."),
+    ]
+    cursor.executemany("INSERT INTO weather_instructions (alert_type, instructions) VALUES (?, ?)", weather_instructions)
 
-# Define weather instructions to insert
-weather_instructions = [
-    ("Rain", "Ensure proper drainage in your garden. Cover sensitive plants."),
-    ("Frost", "Cover plants with cloth or bring them indoors. Water them well."),
-    ("Heatwave", "Provide shade for plants and ensure they are well-watered."),
-    ("Flood", "Move potted plants to higher ground and ensure drainage."),
-    ("Strong Wind", "Secure plants and structures to prevent damage."),
-    ("Storm", "Bring potted plants indoors and secure garden structures."),
-    # Add more instructions as needed
-]
-
-# Insert data into the weather_instructions table
-cursor.executemany("INSERT OR IGNORE INTO weather_instructions (alert_type, instructions) VALUES (?, ?)", weather_instructions)
-
-# Commit the changes and close the connection
+# Commit any new data insertions
 conn.commit()
 conn.close()
 

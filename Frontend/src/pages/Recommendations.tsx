@@ -29,6 +29,7 @@ const Recommendations: React.FC = () => {
   const [visibleCrops, setVisibleCrops] = useState(4);
   const [selectedCrop, setSelectedCrop] = useState<Crop | null>(null);
   const [companionCrops, setCompanionCrops] = useState<Crop[]>([]);
+  const [wantCompanion, setWantCompanion] = useState<boolean>(false);
   const { userCrops, addCropToGarden, removeCropFromGarden } = useGarden();
   const navigate = useNavigate();
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -43,6 +44,7 @@ const Recommendations: React.FC = () => {
   const handleSubmit = async (conditions: GrowingConditions) => {
     setIsLoading(true);
     setShowForm(false);
+    setWantCompanion(conditions.wantCompanion);
     try {
       const response = await fetch('http://127.0.0.1:5000/recommend', {
         method: 'POST',
@@ -167,6 +169,10 @@ const Recommendations: React.FC = () => {
     }
   }, [userNotifications]);
 
+  const handleCompanionCropSelect = (crop: Crop, companionCropNames: string[]) => {
+    setSelectedCrop(crop);
+  };
+
   if (!isAuthenticated) {
     return <Navigate to="/" />;
   }
@@ -206,6 +212,7 @@ const Recommendations: React.FC = () => {
                         crop={crop}
                         onAddToGarden={() => handleAddToGarden(crop)}
                         onRemoveFromGarden={() => removeCropFromGarden(crop.name)}
+                        onSelectCompanion={(companionCropNames) => handleCompanionCropSelect(crop, companionCropNames)}
                       />
                     </div>
                   ))}
@@ -232,7 +239,7 @@ const Recommendations: React.FC = () => {
       </main>
 
       {/* Hovering Window for Companion Crops */}
-      {selectedCrop && selectedCrop.companion_crops && selectedCrop.companion_crops.length > 0 && (
+      {selectedCrop && selectedCrop.companion_crops && selectedCrop.companion_crops.length > 0 && wantCompanion && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4">
             <div className="flex justify-between items-center mb-4">

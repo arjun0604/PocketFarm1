@@ -1,8 +1,8 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 import requests
 import sqlite3
 from crops import recommend_crops  # Ensure crops.py exists and contains recommend_crops
-from flask_socketio import SocketIO
+from flask_socketio import SocketIO, join_room, emit
 import time
 import threading
 import os
@@ -12,30 +12,70 @@ from dotenv import load_dotenv
 import bcrypt
 from datetime import datetime, timedelta
 import math
+import logging
+import socketio
+import traceback
+import random
+import sys
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={
-    r"/*": {
-        "origins": ["http://localhost:8080", "https://localhost:8080", "http://127.0.0.1:8080", "https://127.0.0.1:8080"],
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization", "Accept"],
-        "expose_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": True,
-        "max_age": 600
-    }
-})
 
-# Configure Socket.IO with proper CORS settings
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Simple CORS configuration
+app.config['SECRET_KEY'] = 'secret!'
+app.config['CORS_HEADERS'] = 'Content-Type'
+CORS(app, supports_credentials=True, origins=["https://localhost:8080", "http://localhost:8080", 
+                          "https://127.0.0.1:8080", "http://127.0.0.1:8080"])
+
+# Configure Socket.IO
 socketio = SocketIO(app, 
-    cors_allowed_origins=["http://localhost:8080", "https://localhost:8080", "http://127.0.0.1:8080", "https://127.0.0.1:8080"],
-    supports_credentials=True,
-    async_mode='threading',
-    ping_timeout=60,
-    ping_interval=25
-)
+                   cors_allowed_origins=["https://localhost:8080", "http://localhost:8080", 
+                                        "https://127.0.0.1:8080", "http://127.0.0.1:8080"],
+                   logger=True,
+                   engineio_logger=True,
+                   ping_timeout=60,
+                   ping_interval=25)
+
+# Add CORS headers to all responses
+@app.after_request
+def add_cors_headers(response):
+    response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
+
+# Handle preflight OPTIONS requests
+@app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
+@app.route('/<path:path>', methods=['OPTIONS'])
+def handle_options(path):
+    return app.make_default_options_response()
+
+# Socket.IO event handlers
+@socketio.on('connect')
+def handle_connect():
+    logger.info(f"Client connected: {request.sid}")
+    return True
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    logger.info(f"Client disconnected: {request.sid}")
+    return True
+
+@socketio.on('join')
+def on_join(data):
+    """Handle socket room joining."""
+    user_id = data.get('user_id')
+    if user_id:
+        room = f"user_{user_id}"
+        join_room(room)
+        logger.info(f"User {user_id} joined room: {room}")
 
 # Use environment variable for API key
 API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
@@ -79,8 +119,12 @@ WEATHER_ALERT_THRESHOLDS = {
 def get_db():
     """Get a database connection with proper timeout and error handling."""
     try:
-        conn = sqlite3.connect('PocketFarm.db', timeout=20)  # 20 second timeout
+        conn = sqlite3.connect('PocketFarm.db', timeout=30)  # Increased timeout to 30 seconds
         conn.row_factory = sqlite3.Row
+        # Enable WAL mode for better concurrency
+        conn.execute('PRAGMA journal_mode=WAL')
+        # Set busy timeout
+        conn.execute('PRAGMA busy_timeout=30000')  # 30 seconds
         return conn
     except sqlite3.Error as e:
         print(f"Database connection error: {str(e)}")
@@ -246,14 +290,15 @@ def update_watering():
         data = request.get_json()
         user_id = data.get('user_id')
         crop_name = data.get('crop_name')
-
+        water_status = data.get('water_status')  # New parameter to toggle state
+        
         if not user_id or not crop_name:
-            return jsonify({'error': 'Missing required fields: user_id or crop_name'}), 400
+            return jsonify({'error': 'Missing required fields'}), 400
 
         conn = get_db()
         cursor = conn.cursor()
 
-        # Fetch the user's watering schedule
+        # Get the current schedule
         cursor.execute('''
             SELECT ws.id, ws.last_watered, ws.watering_frequency
             FROM watering_schedules ws
@@ -264,31 +309,44 @@ def update_watering():
 
         if not schedule:
             conn.close()
-            return jsonify({'error': 'Watering schedule not found for the user and crop'}), 404
+            return jsonify({'error': 'Watering schedule not found'}), 404
 
         schedule_id, last_watered, watering_frequency = schedule
 
-        # Calculate the next watering date
-        next_watering = calculate_next_dates(last_watered, watering_frequency)
-
-        # Update the watering schedule with today's date
-        current_date = datetime.now().strftime('%Y-%m-%d')
-        cursor.execute('''
-            UPDATE watering_schedules
-            SET last_watered = ?, next_watering = ?
-            WHERE id = ?
-        ''', (current_date, next_watering, schedule_id))
+        # If water_status is True, mark as watered and update next_watering
+        if water_status:
+            # Calculate the next watering date
+            current_date = datetime.now().strftime('%Y-%m-%d')
+            next_watering = calculate_next_dates(current_date, watering_frequency)
+            
+            # Update the watering schedule with today's date and mark as watered
+            cursor.execute('''
+                UPDATE watering_schedules
+                SET last_watered = ?, next_watering = ?, water_status = 1
+                WHERE id = ?
+            ''', (current_date, next_watering, schedule_id))
+            
+            # Create a notification for the user
+            notification_message = f"Great job! You've watered your {crop_name}. Next watering is scheduled for {next_watering}."
+            create_notification(user_id, notification_message)
+            
+            result_message = f"Watering schedule updated successfully! Next watering: {next_watering}"
+        else:
+            # If water_status is False, mark as not watered
+            cursor.execute('''
+                UPDATE watering_schedules
+                SET water_status = 0
+                WHERE id = ?
+            ''', (schedule_id,))
+            
+            result_message = "Watering status updated."
+        
         conn.commit()
-
-        # Create a notification for the user
-        notification_message = f"Great job! You've watered your {crop_name}. Next watering is scheduled for {next_watering}."
-        create_notification(user_id, notification_message)
-
         conn.close()
-        return jsonify({'message': 'Watering schedule updated successfully!', 'next_watering': next_watering}), 200
+        
+        return jsonify({'message': result_message}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 def get_weather_data(location):
     """Fetch weather data from OpenWeatherMap API with fallback for unavailable locations."""
@@ -1011,8 +1069,24 @@ def remove_from_garden():
 @app.route('/user_schedule/<int:user_id>', methods=['GET'])
 def get_user_schedules(user_id):
     try:
+        print(f"Fetching schedules for user {user_id}")  # Debug log
         conn = get_db()
         cursor = conn.cursor()
+
+        # First check if the user exists
+        cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
+        user = cursor.fetchone()
+        if not user:
+            print(f"User {user_id} not found")  # Debug log
+            conn.close()
+            return jsonify({'error': f'User {user_id} not found'}), 404
+
+        # Check if user has any schedules
+        cursor.execute('''
+            SELECT COUNT(*) FROM watering_schedules WHERE user_id = ?
+        ''', (user_id,))
+        schedule_count = cursor.fetchone()[0]
+        print(f"Found {schedule_count} schedules for user {user_id}")  # Debug log
 
         # Fetch all schedules for the user with crop details
         cursor.execute('''
@@ -1023,21 +1097,26 @@ def get_user_schedules(user_id):
                 ws.next_watering,
                 cs.growing_time,
                 cs.watering_frequency,
-                cs.fertilization_schedule
+                cs.fertilization_schedule,
+                ws.water_status
             FROM watering_schedules ws
             JOIN crops c ON ws.crop_id = c.id
             JOIN crop_schedule cs ON c.name = cs.crop_name
             WHERE ws.user_id = ?
         ''', (user_id,))
         schedules = cursor.fetchall()
+        print(f"Successfully fetched {len(schedules)} schedules")  # Debug log
 
         conn.close()
 
         # Format the response
         schedule_list = [dict(schedule) for schedule in schedules]
         return jsonify(schedule_list), 200
+    except sqlite3.Error as e:
+        print(f"Database error in get_user_schedules: {str(e)}")  # Debug log
+        return jsonify({'error': f'Database error: {str(e)}'}), 500
     except Exception as e:
-        print(f"Error fetching user schedules: {str(e)}")  # Add logging
+        print(f"Error in get_user_schedules: {str(e)}")  # Debug log
         return jsonify({'error': str(e)}), 500
 
 @app.route('/notifications/<int:user_id>', methods=['GET'])
@@ -1073,17 +1152,31 @@ def get_user_notifications(user_id):
 
 def create_notification(user_id, message):
     """Helper function to create a notification for a user."""
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO notifications (user_id, message)
-            VALUES (?, ?)
-        """, (user_id, message))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"Error creating notification: {str(e)}")
+    max_retries = 3
+    retry_delay = 1  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO notifications (user_id, message)
+                VALUES (?, ?)
+            """, (user_id, message))
+            conn.commit()
+            conn.close()
+            return
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and attempt < max_retries - 1:
+                print(f"Database locked, retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                print(f"Error creating notification: {str(e)}")
+                raise
+        except Exception as e:
+            print(f"Error creating notification: {str(e)}")
+            raise
 
 @app.route('/mark_notifications_read/<int:user_id>', methods=['POST'])
 def mark_notifications_read(user_id):
@@ -1281,7 +1374,91 @@ def clear_notifications(user_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+def check_unwatered_crops():
+    """Check for unwatered crops and send notifications."""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get all unwatered crops that are due for watering
+        cursor.execute('''
+            SELECT ws.id, ws.user_id, c.name, ws.next_watering
+            FROM watering_schedules ws
+            JOIN crops c ON ws.crop_id = c.id
+            WHERE ws.water_status = 0 
+            AND ws.next_watering <= date('now')
+        ''')
+        unwatered_crops = cursor.fetchall()
+        
+        for crop in unwatered_crops:
+            schedule_id, user_id, crop_name, next_watering = crop
+            
+            # Create notification for unwatered crop
+            notification_message = f"Your {crop_name} needs watering! It was due on {next_watering}."
+            create_notification(user_id, notification_message)
+            
+            # Update next watering to 3 hours from now
+            next_watering = (datetime.now() + timedelta(hours=3)).strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute('''
+                UPDATE watering_schedules
+                SET next_watering = ?
+                WHERE id = ?
+            ''', (next_watering, schedule_id))
+        
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Error checking unwatered crops: {str(e)}")
+
+# Start a background thread to check for unwatered crops every 3 hours
+def start_unwatered_crops_checker():
+    while True:
+        check_unwatered_crops()
+        time.sleep(10800)  # Sleep for 3 hours
+
+def verify_database_schema():
+    """Verify that all required tables exist with correct schema."""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Check if tables exist
+        cursor.execute("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name IN ('users', 'crops', 'watering_schedules', 'crop_schedule')
+        """)
+        existing_tables = [row[0] for row in cursor.fetchall()]
+        
+        required_tables = ['users', 'crops', 'watering_schedules', 'crop_schedule']
+        missing_tables = [table for table in required_tables if table not in existing_tables]
+        
+        if missing_tables:
+            print(f"Missing tables: {missing_tables}")
+            return False
+            
+        # Check table schemas
+        for table in required_tables:
+            cursor.execute(f"PRAGMA table_info({table})")
+            columns = cursor.fetchall()
+            print(f"\n{table} table schema:")
+            for col in columns:
+                print(f"  {col[1]} ({col[2]})")
+        
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error verifying database schema: {str(e)}")
+        return False
+
 if __name__ == '__main__':
+    # Verify database schema before starting
+    if not verify_database_schema():
+        print("Database schema verification failed. Please check the database setup.")
+        exit(1)
+        
+    # Start the background thread to check for unwatered crops
+    threading.Thread(target=start_unwatered_crops_checker, daemon=True).start()
+    
     # Start the background thread to fetch weather data
     threading.Thread(target=fetch_weather_alerts, daemon=True).start()
     

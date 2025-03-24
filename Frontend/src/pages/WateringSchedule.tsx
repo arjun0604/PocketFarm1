@@ -25,6 +25,7 @@ interface UserCropSchedule {
   growing_time: number;
   watering_frequency: number;
   fertilization_schedule: number;
+  water_status: boolean;
 }
 
 interface Notification {
@@ -42,6 +43,9 @@ const WateringSchedule: React.FC = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const queryClient = useQueryClient();
+  const [wateredCrops, setWateredCrops] = useState<Set<string>>(new Set());
+  const [isWateringToday, setIsWateringToday] = useState<boolean>(true);
+  const [localWateredStatus, setLocalWateredStatus] = useState<Record<string, boolean>>({});
 
   // Fetch user's crop schedules
   const { data: cropSchedules, isLoading: isLoadingSchedules } = useQuery({
@@ -75,19 +79,31 @@ const WateringSchedule: React.FC = () => {
     enabled: !!user,
   });
 
+  // Update localWateredStatus when cropSchedules changes
+  useEffect(() => {
+    if (cropSchedules) {
+      const newStatus: Record<string, boolean> = {};
+      cropSchedules.forEach((crop: UserCropSchedule) => {
+        newStatus[crop.name] = crop.water_status;
+      });
+      setLocalWateredStatus(newStatus);
+    }
+  }, [cropSchedules]);
+
   // Mutation for updating watering status
   const updateWateringMutation = useMutation({
-    mutationFn: async ({ user_id, crop_name }: { user_id: number; crop_name: string }) => {
+    mutationFn: async ({ user_id, crop_name, water_status }: { user_id: number; crop_name: string; water_status: boolean }) => {
       const response = await axios.post('http://127.0.0.1:5000/update_watering', {
         user_id,
         crop_name,
+        water_status,
       });
       return response.data;
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['userCropSchedules', user?.id] });
       toast.success(
-        `🎉 Great job! You've watered your ${selectedCrop?.name} today! Keep up the good work! 🌱`,
+        `🎉 Great job! You've watered your ${variables.crop_name} today! Keep up the good work! 🌱`,
         {
           duration: 5000,
         }
@@ -110,11 +126,6 @@ const WateringSchedule: React.FC = () => {
       setNotifications(userNotifications);
     }
   }, [userNotifications]);
-
-  const hasBeenWateredToday = (crop: UserCropSchedule) => {
-    if (!crop.last_watered) return false;
-    return isSameDay(parseISO(crop.last_watered), new Date());
-  };
 
   const getWateringDates = (crop: UserCropSchedule) => {
     const dates: Date[] = [];
@@ -142,17 +153,107 @@ const WateringSchedule: React.FC = () => {
     return dates;
   };
 
-  const handleWateringResponse = async () => {
-    if (!selectedCrop || !user?.id) return;
+  // This function checks if a crop needs watering today
+  const needsWateringToday = (crop: UserCropSchedule) => {
+    if (!crop.next_watering) return false;
+    
+    // Parse next watering date
+    const nextWateringDate = parseISO(crop.next_watering);
+    const today = new Date();
+    
+    // Add some logging to debug
+    console.log(`Crop ${crop.name}: Next watering: ${format(nextWateringDate, 'yyyy-MM-dd')}, Today: ${format(today, 'yyyy-MM-dd')}, Same day: ${isSameDay(nextWateringDate, today)}`);
+    
+    return isSameDay(nextWateringDate, today);
+  };
 
-    try {
-      await updateWateringMutation.mutateAsync({
-        user_id: Number(user.id),
-        crop_name: selectedCrop.name,
+  const toggleWatering = (crop: UserCropSchedule) => {
+    if (!user?.id) return;
+
+    // Get current status
+    const currentStatus = localWateredStatus[crop.name] === true;
+    
+    // Toggle to opposite state
+    const newStatus = !currentStatus;
+    
+    console.log(`Toggling watering for ${crop.name}. Current: ${currentStatus}, New: ${newStatus}`);
+
+    // Update local state immediately with the toggled value
+    setLocalWateredStatus(prev => {
+      const updatedStatus = {...prev};
+      updatedStatus[crop.name] = newStatus;
+      return updatedStatus;
+    });
+
+    // Show appropriate toast based on new status
+    if (newStatus) {
+      toast.success(`Watering ${crop.name}! 💧`, { 
+        duration: 2000,
+        position: 'top-center' 
       });
-    } catch (error) {
-      console.error('Error updating watering status:', error);
+    } else {
+      toast.info(`Unmarked ${crop.name} as watered`, { 
+        duration: 2000,
+        position: 'top-center' 
+      });
     }
+
+    // Make API request to update backend
+    updateWateringMutation.mutate({
+      user_id: Number(user.id),
+      crop_name: crop.name,
+      water_status: newStatus // Send the new status to backend
+    }, {
+      onError: () => {
+        // Revert state on error (back to original)
+        setLocalWateredStatus(prev => {
+          const revertedStatus = {...prev};
+          revertedStatus[crop.name] = currentStatus;
+          return revertedStatus;
+        });
+        toast.error('Failed to update watering status');
+      }
+    });
+  };
+
+  // Get button state for a crop - with improved logging
+  const getButtonState = (crop: UserCropSchedule) => {
+    // Use local state for immediate UI updates
+    const isWatered = localWateredStatus[crop.name] === true;
+    const shouldWaterToday = needsWateringToday(crop);
+    
+    console.log(`Button state for ${crop.name}: watered=${isWatered}, needsWatering=${shouldWaterToday}`);
+    
+    // First check if already watered today
+    if (isWatered) {
+      return {
+        text: '✅ Already Watered (Click to Undo)',
+        className: 'bg-green-600 hover:bg-green-500 text-white',
+        disabled: false, // Not disabled anymore to allow toggling
+        variant: 'secondary' as const,
+        icon: <Droplets className="h-4 w-4 mr-2 text-white" />
+      };
+    }
+    
+    // Then check if watering is needed today
+    if (!shouldWaterToday) {
+      return {
+        text: `🚫 No Watering Today`,
+        className: 'bg-gray-200 text-gray-700',
+        disabled: true, // Still disabled since no watering needed
+        variant: 'outline' as const,
+        icon: <CalendarDays className="h-4 w-4 mr-2" />
+      };
+    }
+
+    // Default case - watering needed today
+    return {
+      text: '💧 Mark as Watered',
+      className: 'bg-blue-500 hover:bg-blue-600 text-white',
+      disabled: false,
+      variant: 'default' as const,
+      icon: <Droplets className="h-4 w-4 mr-2" />
+    };
   };
 
   if (!isAuthenticated) {
@@ -175,39 +276,53 @@ const WateringSchedule: React.FC = () => {
           </div>
         ) : cropSchedules && cropSchedules.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            {cropSchedules.map((crop: UserCropSchedule) => (
-              <Card key={crop.id} className="border-pocketfarm-secondary/30">
-                <CardHeader>
-                  <CardTitle className="text-lg font-semibold text-pocketfarm-primary">{crop.name}</CardTitle>
-                  <CardDescription>
-                    Last watered: {crop.last_watered ? format(parseISO(crop.last_watered), 'MMM dd, yyyy') : 'Never'}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Droplets className="h-4 w-4 text-blue-500" />
-                      <span>Next watering: {format(parseISO(crop.next_watering), 'MMM dd, yyyy')}</span>
+            {cropSchedules.map((crop: UserCropSchedule) => {
+              const buttonState = getButtonState(crop);
+              return (
+                <Card key={crop.id} className="border-pocketfarm-secondary/30">
+                  <CardHeader>
+                    <CardTitle className="text-lg font-semibold text-pocketfarm-primary">{crop.name}</CardTitle>
+                    <CardDescription>
+                      Last watered: {crop.last_watered ? format(parseISO(crop.last_watered), 'MMM dd, yyyy') : 'Never'}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Droplets className="h-4 w-4 text-blue-500" />
+                        <span>Next watering: {format(parseISO(crop.next_watering), 'MMM dd, yyyy')}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <CalendarDays className="h-4 w-4 text-green-500" />
+                        <span>Growing time: {crop.growing_time} days</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <CalendarDays className="h-4 w-4 text-green-500" />
-                      <span>Growing time: {crop.growing_time} days</span>
-                    </div>
+                  </CardContent>
+                  <div className="p-4 pt-0 space-y-2">
+                    <Button
+                      className="w-full"
+                      onClick={() => {
+                        setSelectedCrop(crop);
+                        setIsDialogOpen(true);
+                      }}
+                    >
+                      View Schedule
+                    </Button>
+                    <Button 
+                      onClick={() => toggleWatering(crop)}
+                      className={`w-full transition-all duration-300 ${buttonState.className}`}
+                      disabled={buttonState.disabled || updateWateringMutation.isPending}
+                      variant={buttonState.variant}
+                    >
+                      {buttonState.icon}
+                      {updateWateringMutation.isPending && updateWateringMutation.variables?.crop_name === crop.name
+                        ? 'Updating...' 
+                        : buttonState.text}
+                    </Button>
                   </div>
-                </CardContent>
-                <div className="p-4 pt-0">
-                  <Button
-                    className="w-full"
-                    onClick={() => {
-                      setSelectedCrop(crop);
-                      setIsDialogOpen(true);
-                    }}
-                  >
-                    View Schedule
-                  </Button>
-                </div>
-              </Card>
-            ))}
+                </Card>
+              );
+            })}
           </div>
         ) : (
           <div className="text-center py-12">
@@ -275,16 +390,15 @@ const WateringSchedule: React.FC = () => {
 
                     <div className="flex justify-end">
                       <Button 
-                        onClick={handleWateringResponse} 
-                        className="w-full"
-                        disabled={updateWateringMutation.isPending || hasBeenWateredToday(selectedCrop)}
+                        onClick={() => toggleWatering(selectedCrop)}
+                        className={`w-full transition-all duration-300 ${selectedCrop ? getButtonState(selectedCrop).className : ''}`}
+                        disabled={(selectedCrop ? getButtonState(selectedCrop).disabled : true) || updateWateringMutation.isPending}
+                        variant={selectedCrop ? getButtonState(selectedCrop).variant : 'default'}
                       >
-                        <Droplets className="h-4 w-4 mr-2" />
-                        {updateWateringMutation.isPending 
+                        {selectedCrop ? getButtonState(selectedCrop).icon : <Droplets className="h-4 w-4 mr-2" />}
+                        {updateWateringMutation.isPending && selectedCrop && updateWateringMutation.variables?.crop_name === selectedCrop.name
                           ? 'Updating...' 
-                          : hasBeenWateredToday(selectedCrop)
-                            ? 'Already Watered Today'
-                            : 'Mark as Watered'}
+                          : selectedCrop ? getButtonState(selectedCrop).text : ''}
                       </Button>
                     </div>
                   </div>
@@ -300,4 +414,4 @@ const WateringSchedule: React.FC = () => {
   );
 };
 
-export default WateringSchedule; 
+export default WateringSchedule;

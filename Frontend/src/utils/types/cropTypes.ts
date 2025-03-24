@@ -39,6 +39,7 @@ export interface Nursery {
   id: string;
   name: string;
   type: 'nursery' | 'store';
+  businessType: string;
   address: string;
   distance: number;
   rating: number;
@@ -46,4 +47,7 @@ export interface Nursery {
   website?: string;
   latitude: number;
   longitude: number;
+  lat?: number;
+  lon?: number;
+  address_loading?: boolean;
 }

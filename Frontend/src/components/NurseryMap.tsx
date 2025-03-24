@@ -17,6 +17,7 @@ const NurseryMap: React.FC<NurseryMapProps> = ({ location }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [filterType, setFilterType] = useState<'all' | 'nursery' | 'store'>('all');
   const [userLocation, setUserLocation] = useState<{ latitude: number, longitude: number } | null>(location || null);
+  const [sortBy, setSortBy] = useState<'distance' | 'rating'>('distance');
 
   const fetchNurseries = useCallback(async (latitude: number, longitude: number) => {
     setIsLoading(true);
@@ -105,8 +106,34 @@ const NurseryMap: React.FC<NurseryMapProps> = ({ location }) => {
     ? nurseries
     : nurseries.filter(nursery => nursery.type === filterType);
 
+  // Sort nurseries based on selected criteria
+  const sortedNurseries = [...filteredNurseries].sort((a, b) => {
+    if (sortBy === 'distance') {
+      return a.distance - b.distance;
+    } else {
+      return b.rating - a.rating;
+    }
+  });
+
   const openDirections = (latitude: number, longitude: number) => {
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
+    if (!userLocation) {
+      toast.error('Please enable location access to get directions');
+      return;
+    }
+
+    // Check if coordinates are valid numbers
+    if (isNaN(latitude) || isNaN(longitude)) {
+      toast.error('Invalid location coordinates');
+      return;
+    }
+
+    // Create a more detailed Google Maps URL with origin and destination
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${userLocation.latitude},${userLocation.longitude}&destination=${latitude},${longitude}&travelmode=driving`;
+    
+    // Log the URL for debugging
+    console.log('Opening directions URL:', url);
+    console.log('Coordinates:', { latitude, longitude, userLocation });
+    
     window.open(url, '_blank');
   };
 
@@ -154,6 +181,28 @@ const NurseryMap: React.FC<NurseryMapProps> = ({ location }) => {
         </div>
       )}
 
+      <div className="flex justify-end mb-4">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-pocketfarm-gray">Sort by:</span>
+          <Button
+            variant={sortBy === 'distance' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setSortBy('distance')}
+            className={sortBy === 'distance' ? 'bg-pocketfarm-primary hover:bg-pocketfarm-dark' : ''}
+          >
+            Distance
+          </Button>
+          <Button
+            variant={sortBy === 'rating' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setSortBy('rating')}
+            className={sortBy === 'rating' ? 'bg-pocketfarm-primary hover:bg-pocketfarm-dark' : ''}
+          >
+            Rating
+          </Button>
+        </div>
+      </div>
+
       {isLoading ? (
         <div className="py-12 text-center">
           <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-2 text-pocketfarm-primary" />
@@ -173,65 +222,85 @@ const NurseryMap: React.FC<NurseryMapProps> = ({ location }) => {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredNurseries.length > 0 ? (
-            filteredNurseries.map((nursery) => (
+          {sortedNurseries.length > 0 ? (
+            sortedNurseries.map((nursery) => (
               <Card key={nursery.id} className="border-pocketfarm-secondary/30 h-full">
                 <CardHeader className="pb-2">
-                  <div className="flex justify-between items-start">
-                    <div>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex flex-col gap-1">
                       <CardTitle className="text-lg">{nursery.name}</CardTitle>
-                      <CardDescription className="flex items-center gap-1 mt-1">
-                        <MapPin className="h-3 w-3" />
-                        {nursery.address}
-                      </CardDescription>
+                      <div className="flex items-center gap-2">
+                        <Badge className={`px-2 py-0.5 text-xs font-medium ${
+                          nursery.type === 'nursery' 
+                            ? 'bg-blue-100 text-blue-700 border border-blue-200' 
+                            : 'bg-orange-100 text-orange-700 border border-orange-200'
+                        }`}>
+                          {nursery.type === 'nursery' ? 'Nursery' : 'Supplies'}
+                        </Badge>
+                      </div>
                     </div>
-                    <Badge className={nursery.type === 'nursery' ? 'bg-pocketfarm-primary' : 'bg-pocketfarm-accent text-black'}>
-                      {nursery.type === 'nursery' ? 'Nursery' : 'Supplies'}
-                    </Badge>
+                    <div className="flex flex-col gap-1 mt-1 text-sm text-muted-foreground">
+                      <div className="flex items-center gap-1">
+                        <MapPin className="h-3 w-3" />
+                        <span>
+                          {nursery.address_loading ? (
+                            <span className="text-pocketfarm-gray animate-pulse">Loading address...</span>
+                          ) : (
+                            nursery.address
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-pocketfarm-gray">
+                        <span>{nursery.distance} km away</span>
+                        {nursery.phone && (
+                          <span className="flex items-center gap-1">
+                            <Phone className="h-3 w-3" />
+                            {nursery.phone}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid gap-2">
-                    <div className="flex justify-between items-center">
-                      <div className="flex items-center gap-1">
-                        <span className="text-sm font-medium">Rating:</span>
-                        <div className="flex items-center">
+                  <div className="grid gap-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
                           <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                          <span className="ml-1 text-sm">{nursery.rating}</span>
+                          <span className="text-sm font-medium">{nursery.rating}</span>
                         </div>
                       </div>
-                      <span className="text-sm">{nursery.distance} km away</span>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8"
+                          onClick={() => {
+                            console.log('Nursery coordinates:', { 
+                              lat: nursery.lat || nursery.latitude, 
+                              lon: nursery.lon || nursery.longitude 
+                            });
+                            openDirections(
+                              nursery.lat || nursery.latitude, 
+                              nursery.lon || nursery.longitude
+                            );
+                          }}
+                        >
+                          <Navigation className="h-3 w-3 mr-1" />
+                          Get Directions
+                        </Button>
+                      </div>
                     </div>
 
-                    <div className="flex flex-wrap gap-2 mt-2">
-                      {nursery.phone && (
-                        <Button variant="outline" size="sm" className="h-8" asChild>
-                          <a href={`tel:${nursery.phone}`} className="flex items-center gap-1">
-                            <Phone className="h-3 w-3" />
-                            Call
-                          </a>
-                        </Button>
-                      )}
-
-                      {nursery.website && (
-                        <Button variant="outline" size="sm" className="h-8" asChild>
-                          <a href={`https://${nursery.website}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1">
-                            <Globe className="h-3 w-3" />
-                            Website
-                          </a>
-                        </Button>
-                      )}
-
-                      <Button
-                        variant="default"
-                        size="sm"
-                        className="h-8 bg-pocketfarm-primary hover:bg-pocketfarm-dark ml-auto"
-                        onClick={() => openDirections(nursery.latitude, nursery.longitude)}
-                      >
-                        <Navigation className="h-3 w-3 mr-1" />
-                        Directions
+                    {nursery.website && (
+                      <Button variant="outline" size="sm" className="h-8 w-full" asChild>
+                        <a href={`https://${nursery.website}`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-1">
+                          <Globe className="h-3 w-3" />
+                          Visit Website
+                        </a>
                       </Button>
-                    </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>

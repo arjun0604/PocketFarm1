@@ -24,6 +24,7 @@ interface UserCropSchedule {
   growing_time: number;
   watering_frequency: number;
   fertilization_schedule: number;
+  water_status: boolean;
 }
 
 interface Notification {
@@ -314,12 +315,13 @@ const UserCrops: React.FC = () => {
                     <Button 
                       onClick={handleWateringResponse} 
                       className="w-full"
-                      disabled={updateWateringMutation.isPending || hasBeenWateredToday(selectedCrop)}
+                      disabled={updateWateringMutation.isPending || selectedCrop?.water_status}
+                      variant={selectedCrop?.water_status ? "secondary" : "default"}
                     >
                       <Droplets className="h-4 w-4 mr-2" />
                       {updateWateringMutation.isPending 
                         ? 'Updating...' 
-                        : hasBeenWateredToday(selectedCrop)
+                        : selectedCrop?.water_status
                           ? 'Already Watered Today'
                           : 'Mark as Watered'}
                     </Button>

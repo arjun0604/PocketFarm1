@@ -137,7 +137,10 @@ const CropCard: React.FC<CropCardProps> = ({
           <div className="text-xs">
             <span className="font-medium">Companion plants: </span>
             <button
-              onClick={handleCompanionCropClick}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectCompanion?.(crop.companion_crops);
+              }}
               className="text-pocketfarm-primary hover:underline"
             >
               {crop.companion_crops.join(', ')}
