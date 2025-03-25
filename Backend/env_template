@@ -1,0 +1,28 @@
+# Environment Configuration - Copy to .env and update values
+
+# Production Settings
+ENVIRONMENT=production
+PORT=10000
+
+# Database
+# For Render PostgreSQL, uncomment this line and set your PostgreSQL connection string
+# DATABASE_URL=postgres://username:password@host:port/database
+
+# Frontend URL
+# Update with your deployed frontend URL
+FRONTEND_URL=https://your-frontend-app.onrender.com
+
+# Google OAuth Configuration
+GOOGLE_CLIENT_ID=515812611594-mth37t3mrcuo5f7tqfjad8ptcqq70k1f.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-_90000000000000000000000000000000
+GOOGLE_REDIRECT_URI=postmessage
+
+# OpenWeatherMap API
+OPENWEATHERMAP_API_KEY=5193c207f3bd5612fca941606f8c5fd0
+
+# Email Configuration for Verification
+EMAIL_USER=arjunsanthosh11b2@gmail.com
+EMAIL_PASSWORD=cxqmpqapmahzmbxn
+
+# Security
+SECRET_KEY=generate-a-strong-random-secret-key 

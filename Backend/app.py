@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, g
 import requests
 import sqlite3
+import psycopg2
 from crops import recommend_crops
 from flask_socketio import SocketIO, join_room, emit
 import time
@@ -23,6 +24,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import yagmail
+from database_config import get_db, get_cursor
 
 # Load environment variables
 load_dotenv()
@@ -144,238 +146,6 @@ WEATHER_ALERT_THRESHOLDS = {
     }
 }
 
-def get_db():
-    """Get a database connection with proper timeout and error handling."""
-    try:
-        conn = sqlite3.connect(DB_PATH, timeout=30)  # Use the DB_PATH variable
-        conn.row_factory = sqlite3.Row
-        # Enable WAL mode for better concurrency
-        conn.execute('PRAGMA journal_mode=WAL')
-        # Set busy timeout
-        conn.execute('PRAGMA busy_timeout=30000')  # 30 seconds
-        return conn
-    except sqlite3.Error as e:
-        print(f"Database connection error: {str(e)}")
-        raise
-
-@app.route('/crop_schedule', methods=['GET'])
-def get_crop_schedule():
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-
-        # Fetch all crop schedules
-        cursor.execute("SELECT * FROM crop_schedule")
-        schedules = cursor.fetchall()
-
-        conn.close()
-
-        # Format the response
-        schedule_list = [dict(schedule) for schedule in schedules]
-        return jsonify(schedule_list), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/user_schedule', methods=['POST'])
-def create_user_schedule():
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-
-        user_id = data.get('user_id')
-        crop_name = data.get('crop_name')
-
-        if not user_id or not crop_name:
-            return jsonify({'error': 'Missing required fields: user_id or crop_name'}), 400
-
-        conn = get_db()
-        cursor = conn.cursor()
-
-        try:
-            # Start transaction
-            cursor.execute('BEGIN TRANSACTION')
-
-            # First check if the crop exists in the crops table
-            cursor.execute("SELECT id FROM crops WHERE name = ?", (crop_name,))
-            crop = cursor.fetchone()
-            if not crop:
-                cursor.execute('ROLLBACK')
-                conn.close()
-                return jsonify({'error': f'Crop "{crop_name}" not found in the database'}), 404
-
-            # Check if the user exists
-            cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
-            user = cursor.fetchone()
-            if not user:
-                cursor.execute('ROLLBACK')
-                conn.close()
-                return jsonify({'error': f'User with id "{user_id}" not found'}), 404
-
-            # Check if schedule already exists
-            cursor.execute('''
-                SELECT ws.id FROM watering_schedules ws
-                JOIN crops c ON ws.crop_id = c.id
-                WHERE ws.user_id = ? AND c.name = ?
-            ''', (user_id, crop_name))
-            existing_schedule = cursor.fetchone()
-            if existing_schedule:
-                cursor.execute('COMMIT')
-                conn.close()
-                return jsonify({'message': 'Schedule already exists for this crop'}), 200
-
-            # Get the schedule details from crop_schedule
-            cursor.execute('''
-                SELECT growing_time, watering_frequency, fertilization_schedule
-                FROM crop_schedule
-                WHERE crop_name = ?
-            ''', (crop_name,))
-            schedule_data = cursor.fetchone()
-            
-            if not schedule_data:
-                cursor.execute('ROLLBACK')
-                conn.close()
-                return jsonify({'error': f'No schedule data found for crop "{crop_name}"'}), 404
-
-            growing_time, watering_frequency, fertilization_schedule = schedule_data
-
-            # Calculate initial watering dates
-            current_date = datetime.now().strftime('%Y-%m-%d')
-            next_watering = (datetime.now() + timedelta(days=watering_frequency)).strftime('%Y-%m-%d')
-
-            # Insert the user's watering schedule with current date for last_watered
-            cursor.execute('''
-                INSERT INTO watering_schedules 
-                (user_id, crop_id, watering_frequency, fertilization_schedule, last_watered, next_watering)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (user_id, crop[0], watering_frequency, fertilization_schedule, current_date, next_watering))
-
-            # Commit transaction
-            cursor.execute('COMMIT')
-            conn.close()
-            return jsonify({'message': 'User schedule created successfully!'}), 200
-
-        except sqlite3.Error as e:
-            # Rollback transaction on error
-            cursor.execute('ROLLBACK')
-            conn.close()
-            print(f"Database error in create_user_schedule: {str(e)}")
-            return jsonify({'error': f'Database error occurred: {str(e)}'}), 500
-        except Exception as e:
-            # Rollback transaction on error
-            cursor.execute('ROLLBACK')
-            conn.close()
-            print(f"Error in create_user_schedule: {str(e)}")
-            return jsonify({'error': str(e)}), 500
-
-    except Exception as e:
-        print(f"Error in create_user_schedule: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/user_schedule/<int:user_id>/<crop_name>', methods=['DELETE'])
-def delete_user_schedule(user_id, crop_name):
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-
-        # First check if the schedule exists
-        cursor.execute('''
-            SELECT ws.id FROM watering_schedules ws
-            JOIN crops c ON ws.crop_id = c.id
-            WHERE ws.user_id = ? AND c.name = ?
-        ''', (user_id, crop_name))
-        schedule = cursor.fetchone()
-
-        if not schedule:
-            conn.close()
-            return jsonify({'message': 'No schedule found for this crop'}), 200
-
-        # Delete the user's watering schedule
-        cursor.execute('''
-            DELETE FROM watering_schedules
-            WHERE user_id = ? AND crop_id IN (
-                SELECT id FROM crops WHERE name = ?
-            )
-        ''', (user_id, crop_name))
-        conn.commit()
-
-        conn.close()
-        return jsonify({'message': 'User schedule deleted successfully!'}), 200
-    except Exception as e:
-        print(f"Error deleting user schedule: {str(e)}")  # Add logging
-        return jsonify({'error': str(e)}), 500
-
-def calculate_next_dates(last_date, frequency):
-    if not last_date:
-        return datetime.now().strftime('%Y-%m-%d')
-    last_date = datetime.strptime(last_date, '%Y-%m-%d')
-    next_date = last_date + timedelta(days=frequency)
-    return next_date.strftime('%Y-%m-%d')
-
-@app.route('/update_watering', methods=['POST'])
-def update_watering():
-    try:
-        data = request.get_json()
-        user_id = data.get('user_id')
-        crop_name = data.get('crop_name')
-        water_status = data.get('water_status')  # New parameter to toggle state
-        
-        if not user_id or not crop_name:
-            return jsonify({'error': 'Missing required fields'}), 400
-
-        conn = get_db()
-        cursor = conn.cursor()
-
-        # Get the current schedule
-        cursor.execute('''
-            SELECT ws.id, ws.last_watered, ws.watering_frequency
-            FROM watering_schedules ws
-            JOIN crops c ON ws.crop_id = c.id
-            WHERE ws.user_id = ? AND c.name = ?
-        ''', (user_id, crop_name))
-        schedule = cursor.fetchone()
-
-        if not schedule:
-            conn.close()
-            return jsonify({'error': 'Watering schedule not found'}), 404
-
-        schedule_id, last_watered, watering_frequency = schedule
-
-        # If water_status is True, mark as watered and update next_watering
-        if water_status:
-            # Calculate the next watering date
-            current_date = datetime.now().strftime('%Y-%m-%d')
-            next_watering = calculate_next_dates(current_date, watering_frequency)
-            
-            # Update the watering schedule with today's date and mark as watered
-            cursor.execute('''
-                UPDATE watering_schedules
-                SET last_watered = ?, next_watering = ?, water_status = 1
-                WHERE id = ?
-            ''', (current_date, next_watering, schedule_id))
-            
-            # Create a notification for the user
-            notification_message = f"Great job! You've watered your {crop_name}. Next watering is scheduled for {next_watering}."
-            create_notification(user_id, notification_message)
-            
-            result_message = f"Watering schedule updated successfully! Next watering: {next_watering}"
-        else:
-            # If water_status is False, mark as not watered
-            cursor.execute('''
-                UPDATE watering_schedules
-                SET water_status = 0
-                WHERE id = ?
-            ''', (schedule_id,))
-            
-            result_message = "Watering status updated."
-        
-        conn.commit()
-        conn.close()
-        
-        return jsonify({'message': result_message}), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 def get_weather_data(location):
     """Fetch weather data from OpenWeatherMap API with fallback for unavailable locations."""
     if not API_KEY:
@@ -438,7 +208,7 @@ def check_weather_alerts(weather_data):
     for alert_type, threshold_data in WEATHER_ALERT_THRESHOLDS.items():
         # Check if enough time has passed since last alert
         conn = get_db()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
         
         # First check if user has weather alerts enabled
         cursor.execute("""
@@ -448,6 +218,7 @@ def check_weather_alerts(weather_data):
         preferences = cursor.fetchone()
         
         if not preferences or not preferences[0]:
+            cursor.close()
             conn.close()
             continue
             
@@ -458,6 +229,7 @@ def check_weather_alerts(weather_data):
             ORDER BY timestamp DESC LIMIT 1
         """, (f"%{threshold_data['message']}%", user_id))
         last_alert = cursor.fetchone()
+        cursor.close()
         conn.close()
         
         # If there's a last alert, check if enough time has passed
@@ -516,7 +288,7 @@ def fetch_weather_alerts():
         try:
             # Get all users from the database
             conn = get_db()
-            cursor = conn.cursor()
+            cursor = get_cursor(conn)
             cursor.execute("""
                 SELECT u.id, u.location_latitude, u.location_longitude, np.weather_alerts
                 FROM users u
@@ -524,6 +296,7 @@ def fetch_weather_alerts():
                 WHERE u.location_latitude IS NOT NULL AND u.location_longitude IS NOT NULL
             """)
             users = cursor.fetchall()
+            cursor.close()
             conn.close()
 
             for user in users:
@@ -551,12 +324,13 @@ def fetch_weather_alerts():
                     if alerts:
                         # Create notifications in the database
                         conn = get_db()
-                        cursor = conn.cursor()
+                        cursor = get_cursor(conn)
                         for alert in alerts:
                             cursor.execute("""
                                 INSERT INTO notifications (user_id, message)
                                 VALUES (?, ?)
                             """, (user_id, alert['message']))
+                        cursor.close()
                         conn.commit()
                         conn.close()
                         
@@ -647,8 +421,8 @@ def handle_response():
         response = data['response']  # 'yes' or 'no'
 
         # Connect to the database
-        conn = sqlite3.connect('PocketFarm.db')
-        cursor = conn.cursor()
+        conn = get_db()
+        cursor = get_cursor(conn)
 
         current_date = time.strftime('%Y-%m-%d')
 
@@ -662,6 +436,7 @@ def handle_response():
             cursor.execute("UPDATE users SET next_watering_date=? WHERE device_token=?", 
                           (current_date, device_token))
 
+        cursor.close()
         conn.commit()
         conn.close()
 
@@ -727,8 +502,8 @@ def recommend():
         recommended_crops = recommend_crops(sunlight, water_needs, avg_temp, avg_humidity, area, current_month)
         
         # Connect to the SQLite database
-        conn = sqlite3.connect('PocketFarm.db')
-        cursor = conn.cursor()
+        conn = get_db()
+        cursor = get_cursor(conn)
 
         # Prepare a list to hold crop details
         crops_with_details = []
@@ -776,6 +551,7 @@ def recommend():
 
                 crops_with_details.append(detailed_info)
 
+        cursor.close()
         conn.close()
         return jsonify(crops_with_details)
     except KeyError as e:
@@ -789,12 +565,13 @@ def recommend():
 def get_crop_details(crop_name):
     """Get details for a specific crop."""
     try:
-        conn = sqlite3.connect('PocketFarm.db')
-        cursor = conn.cursor()
+        conn = get_db()
+        cursor = get_cursor(conn)
         crop_name=crop_name.capitalize()
         cursor.execute("SELECT * FROM crops WHERE name = ?", (crop_name,))
         crop = cursor.fetchone()
 
+        cursor.close()
         conn.close()
 
         if crop is None:
@@ -834,7 +611,7 @@ def add_to_library():
             return jsonify({'error': 'Missing required fields: user_id or crop_name'}), 400
 
         conn = get_db()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
 
         try:
             # Start transaction
@@ -845,6 +622,7 @@ def add_to_library():
             crop = cursor.fetchone()
             if not crop:
                 cursor.execute('ROLLBACK')
+                cursor.close()
                 conn.close()
                 return jsonify({'error': f'Crop "{crop_name}" not found in the database'}), 404
 
@@ -853,6 +631,7 @@ def add_to_library():
             user = cursor.fetchone()
             if not user:
                 cursor.execute('ROLLBACK')
+                cursor.close()
                 conn.close()
                 return jsonify({'error': f'User with id "{user_id}" not found'}), 404
 
@@ -861,6 +640,7 @@ def add_to_library():
             existing_entry = cursor.fetchone()
             if existing_entry:
                 cursor.execute('COMMIT')
+                cursor.close()
                 conn.close()
                 return jsonify({'message': 'Crop is already in your library!'}), 200
 
@@ -869,22 +649,17 @@ def add_to_library():
 
             # Commit transaction
             cursor.execute('COMMIT')
+            cursor.close()
             conn.close()
             return jsonify({'message': 'Crop added to library successfully!'}), 200
 
-        except sqlite3.Error as e:
-            # Rollback transaction on error
-            cursor.execute('ROLLBACK')
-            conn.close()
-            print(f"Database error in add_to_library: {str(e)}")
-            return jsonify({'error': 'Database error occurred'}), 500
         except Exception as e:
             # Rollback transaction on error
             cursor.execute('ROLLBACK')
+            cursor.close()
             conn.close()
-            print(f"Error in add_to_library: {str(e)}")
-            return jsonify({'error': str(e)}), 500
-
+            print(f"Database error in add_to_library: {str(e)}")
+            return jsonify({'error': 'Database error occurred'}), 500
     except Exception as e:
         print(f"Error in add_to_library: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -901,8 +676,8 @@ def get_user_crops():
         user_id = auth_header.split(' ')[1]  # Extract user_id from the token
 
         # Connect to the database
-        conn = sqlite3.connect('PocketFarm.db')
-        cursor = conn.cursor()
+        conn = get_db()
+        cursor = get_cursor(conn)
 
         # Fetch the crops added by the user
         cursor.execute(
@@ -911,17 +686,15 @@ def get_user_crops():
         )
         crops = cursor.fetchall()
 
+        cursor.close()
         conn.close()
 
         # Format the response
         crop_list = [crop[0] for crop in crops]
         return jsonify(crop_list), 200
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Database error: {e}")
         return jsonify({'error': 'Database error occurred'}), 500
-    except Exception as e:
-        print(f"Unexpected error: {e}")
-        return jsonify({'error': str(e)}), 500
 
 
 
@@ -968,10 +741,11 @@ def signup():
             
         # Check if email already exists
         conn = get_db()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
         cursor.execute("SELECT id FROM users WHERE email = ?", (email,))
         existing_user = cursor.fetchone()
         if existing_user:
+            cursor.close()
             conn.close()
             return jsonify({'error': 'Email already registered'}), 409
         
@@ -1042,6 +816,7 @@ def signup():
             (user_id, verification_token, expires_at)
         )
         
+        cursor.close()
         conn.commit()
         conn.close()
         
@@ -1089,9 +864,10 @@ def login():
 
         # Fetch the user from the database
         conn = get_db()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
         cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
         user = cursor.fetchone()
+        cursor.close()
         conn.close()
 
         if not user:
@@ -1185,23 +961,25 @@ def remove_from_garden():
             return jsonify({'error': 'Missing required fields: user_id or crop_name'}), 400
 
         # Connect to the database
-        conn = sqlite3.connect('PocketFarm.db')
-        cursor = conn.cursor()
+        conn = get_db()
+        cursor = get_cursor(conn)
 
         # Fetch the crop ID
         cursor.execute("SELECT id FROM crops WHERE name = ?", (crop_name,))
         crop = cursor.fetchone()
         if not crop:
+            cursor.close()
             conn.close()
             return jsonify({'error': f'Crop "{crop_name}" not found in the database'}), 404
 
         # Delete the crop from the user's garden
         cursor.execute("DELETE FROM user_crops WHERE user_id = ? AND crop_id = ?", (user_id, crop[0]))
+        cursor.close()
         conn.commit()
         conn.close()
 
         return jsonify({'message': 'Crop removed from garden successfully!'}), 200
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Database error: {e}")
         return jsonify({'error': 'Database error occurred'}), 500
     except Exception as e:
@@ -1214,13 +992,14 @@ def get_user_schedules(user_id):
     try:
         print(f"Fetching schedules for user {user_id}")  # Debug log
         conn = get_db()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
 
         # First check if the user exists
         cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
         user = cursor.fetchone()
         if not user:
             print(f"User {user_id} not found")  # Debug log
+            cursor.close()
             conn.close()
             return jsonify({'error': f'User {user_id} not found'}), 404
 
@@ -1250,12 +1029,13 @@ def get_user_schedules(user_id):
         schedules = cursor.fetchall()
         print(f"Successfully fetched {len(schedules)} schedules")  # Debug log
 
+        cursor.close()
         conn.close()
 
         # Format the response
         schedule_list = [dict(schedule) for schedule in schedules]
         return jsonify(schedule_list), 200
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Database error in get_user_schedules: {str(e)}")  # Debug log
         return jsonify({'error': f'Database error: {str(e)}'}), 500
     except Exception as e:
@@ -1267,7 +1047,7 @@ def get_user_notifications(user_id):
     try:
         print(f"Fetching notifications for user {user_id}")  # Debug log
         conn = get_db()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
 
         # Get notifications from the database
         cursor.execute("""
@@ -1301,22 +1081,15 @@ def create_notification(user_id, message):
     for attempt in range(max_retries):
         try:
             conn = get_db()
-            cursor = conn.cursor()
+            cursor = get_cursor(conn)
             cursor.execute("""
                 INSERT INTO notifications (user_id, message)
                 VALUES (?, ?)
             """, (user_id, message))
+            cursor.close()
             conn.commit()
             conn.close()
             return
-        except sqlite3.OperationalError as e:
-            if "database is locked" in str(e) and attempt < max_retries - 1:
-                print(f"Database locked, retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
-                retry_delay *= 2  # Exponential backoff
-            else:
-                print(f"Error creating notification: {str(e)}")
-                raise
         except Exception as e:
             print(f"Error creating notification: {str(e)}")
             raise
@@ -1386,12 +1159,13 @@ def send_verification_email(to_email, verification_token, user_id):
 def mark_notifications_read(user_id):
     try:
         conn = get_db()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
         cursor.execute("""
             UPDATE notifications 
             SET read_status = 1 
             WHERE user_id = ? AND read_status = 0
         """, (user_id,))
+        cursor.close()
         conn.commit()
         conn.close()
         return jsonify({'message': 'All notifications marked as read'}), 200
@@ -1402,12 +1176,13 @@ def mark_notifications_read(user_id):
 def get_users():
     try:
         conn = get_db()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
         cursor.execute("""
             SELECT id, name, email, location_city, location_state, location_country 
             FROM users
         """)
         users = cursor.fetchall()
+        cursor.close()
         conn.close()
         
         formatted_users = [{
@@ -1432,7 +1207,7 @@ def verify_email():
             return jsonify({'error': 'Invalid verification link'}), 400
             
         conn = get_db()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
         
         # Check if the token is valid
         cursor.execute("""
@@ -1442,6 +1217,7 @@ def verify_email():
         verification = cursor.fetchone()
         
         if not verification:
+            cursor.close()
             conn.close()
             return jsonify({'error': 'Invalid or expired verification link'}), 400
             
@@ -1458,6 +1234,7 @@ def verify_email():
             WHERE user_id = ? AND token = ?
         """, (user_id, token))
         
+        cursor.close()
         conn.commit()
         conn.close()
         
@@ -1479,7 +1256,7 @@ def resend_verification():
         logger.info(f"Resending verification email to: {email}")
             
         conn = get_db()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
         
         # Check if user exists and is not already verified
         cursor.execute("""
@@ -1490,6 +1267,7 @@ def resend_verification():
         
         if not user:
             logger.error(f"User not found for email: {email}")
+            cursor.close()
             conn.close()
             return jsonify({'error': 'User not found'}), 404
             
@@ -1497,6 +1275,7 @@ def resend_verification():
         
         if is_verified:
             logger.info(f"Email already verified for: {email}")
+            cursor.close()
             conn.close()
             return jsonify({'message': 'Email is already verified'}), 200
             
@@ -1516,6 +1295,7 @@ def resend_verification():
             VALUES (?, ?, ?)
         """, (user_id, verification_token, expires_at))
         
+        cursor.close()
         conn.commit()
         conn.close()
         
@@ -1683,8 +1463,9 @@ def get_nurseries():
 def clear_notifications(user_id):
     try:
         conn = get_db()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
         cursor.execute("DELETE FROM notifications WHERE user_id = ?", (user_id,))
+        cursor.close()
         conn.commit()
         conn.close()
         return jsonify({'message': 'All notifications cleared'}), 200
@@ -1695,7 +1476,7 @@ def check_unwatered_crops():
     """Check for unwatered crops and send notifications."""
     try:
         conn = get_db()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
         
         # Get all unwatered crops that are due for watering
         cursor.execute('''
@@ -1722,6 +1503,7 @@ def check_unwatered_crops():
                 WHERE id = ?
             ''', (next_watering, schedule_id))
         
+        cursor.close()
         conn.commit()
         conn.close()
     except Exception as e:
@@ -1734,61 +1516,25 @@ def start_unwatered_crops_checker():
         time.sleep(10800)  # Sleep for 3 hours
 
 def verify_database_schema():
-    """Verify that all required tables exist with correct schema."""
+    """Verify that the database schema exists and is valid."""
     try:
         conn = get_db()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
         
-        # Check if tables exist
-        cursor.execute("""
-            SELECT name FROM sqlite_master 
-            WHERE type='table' AND name IN ('users', 'crops', 'watering_schedules', 'crop_schedule', 'verification_tokens')
-        """)
-        existing_tables = [row[0] for row in cursor.fetchall()]
+        # Check if users table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'") if isinstance(conn, sqlite3.Connection) else cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name = 'users'")
         
-        required_tables = ['users', 'crops', 'watering_schedules', 'crop_schedule', 'verification_tokens']
-        missing_tables = [table for table in required_tables if table not in existing_tables]
-        
-        if 'verification_tokens' in missing_tables:
-            logger.info("Creating verification_tokens table...")
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS verification_tokens (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    token TEXT NOT NULL,
-                    expires_at DATETIME NOT NULL,
-                    FOREIGN KEY (user_id) REFERENCES users(id)
-                )
-            """)
-            conn.commit()
-            missing_tables.remove('verification_tokens')
-            
-        # Check if users table has email_verified column
-        cursor.execute("PRAGMA table_info(users)")
-        columns = [column[1] for column in cursor.fetchall()]
-        
-        if 'email_verified' not in columns:
-            logger.info("Adding email_verified column to users table...")
-            cursor.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0")
-            conn.commit()
-        
-        if missing_tables:
-            print(f"Missing tables: {missing_tables}")
+        if cursor.fetchone() is None:
+            print("Database schema is invalid: users table not found")
             return False
             
-        # Check table schemas
-        for table in required_tables:
-            if table in existing_tables:
-                cursor.execute(f"PRAGMA table_info({table})")
-                columns = cursor.fetchall()
-                print(f"\n{table} table schema:")
-                for col in columns:
-                    print(f"  {col[1]} ({col[2]})")
+        # More schema verification can be added here
         
+        cursor.close()
         conn.close()
         return True
     except Exception as e:
-        print(f"Error verifying database schema: {str(e)}")
+        print(f"Database schema verification error: {str(e)}")
         return False
 
 @app.route('/google_auth', methods=['POST'])
@@ -1806,7 +1552,7 @@ def google_auth():
         logger.info(f"Google Auth - Processing for email: {email}")
         
         conn = get_db()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
         
         # Check if user exists
         cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
@@ -1842,6 +1588,7 @@ def google_auth():
             cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
             user = cursor.fetchone()
             
+        cursor.close()
         conn.close()
         logger.info(f"Google Auth - Successfully authenticated user: {email}")
         
@@ -1875,7 +1622,7 @@ def delete_account():
             return jsonify({'error': 'User ID is required'}), 400
             
         conn = get_db()
-        cursor = conn.cursor()
+        cursor = get_cursor(conn)
         
         try:
             # Start transaction for atomicity
@@ -1908,6 +1655,7 @@ def delete_account():
             logger.error(f"Error during account deletion: {str(e)}")
             return jsonify({'error': f'Failed to delete account: {str(e)}'}), 500
         finally:
+            cursor.close()
             conn.close()
             
     except Exception as e:
