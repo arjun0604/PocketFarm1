@@ -33,16 +33,29 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Get the environment
+environment = os.getenv("ENVIRONMENT", "development")
+is_production = environment == "production"
+
+# Database path - use environment variable if available
+DB_PATH = os.getenv("DATABASE_URL", "PocketFarm.db")
+
+# CORS configuration - Update with production frontend URL
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:8080")
+allowed_origins = [FRONTEND_URL]
+if not is_production:
+    # Add local development URLs
+    allowed_origins.extend(["https://localhost:8080", "http://localhost:8080", 
+                        "https://127.0.0.1:8080", "http://127.0.0.1:8080"])
+
 # Simple CORS configuration
-app.config['SECRET_KEY'] = 'secret!'
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'secret!')
 app.config['CORS_HEADERS'] = 'Content-Type'
-CORS(app, supports_credentials=True, origins=["https://localhost:8080", "http://localhost:8080", 
-                          "https://127.0.0.1:8080", "http://127.0.0.1:8080"])
+CORS(app, supports_credentials=True, origins=allowed_origins)
 
 # Configure Socket.IO with proper CORS settings
 socketio = SocketIO(app, 
-                   cors_allowed_origins=["https://localhost:8080", "http://localhost:8080", 
-                                       "https://127.0.0.1:8080", "http://127.0.0.1:8080"],
+                   cors_allowed_origins=allowed_origins,
                    logger=True,
                    engineio_logger=True,
                    ping_timeout=60,
@@ -56,7 +69,11 @@ socketio = SocketIO(app,
 # Add CORS headers to all responses
 @app.after_request
 def add_cors_headers(response):
-    response.headers.add('Access-Control-Allow-Origin', 'https://localhost:8080')
+    origin = request.headers.get('Origin', '')
+    if origin in allowed_origins:
+        response.headers.add('Access-Control-Allow-Origin', origin)
+    else:
+        response.headers.add('Access-Control-Allow-Origin', allowed_origins[0])
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     response.headers.add('Access-Control-Allow-Credentials', 'true')
@@ -130,7 +147,7 @@ WEATHER_ALERT_THRESHOLDS = {
 def get_db():
     """Get a database connection with proper timeout and error handling."""
     try:
-        conn = sqlite3.connect('PocketFarm.db', timeout=30)  # Increased timeout to 30 seconds
+        conn = sqlite3.connect(DB_PATH, timeout=30)  # Use the DB_PATH variable
         conn.row_factory = sqlite3.Row
         # Enable WAL mode for better concurrency
         conn.execute('PRAGMA journal_mode=WAL')
@@ -1910,4 +1927,10 @@ if __name__ == '__main__':
     threading.Thread(target=fetch_weather_alerts, daemon=True).start()
     
     # Run the Flask app with SocketIO
-    socketio.run(app, debug=True)
+    port = int(os.getenv("PORT", 5000))
+    if is_production:
+        # In production, let Gunicorn handle the serving
+        app.run(host='0.0.0.0', port=port)
+    else:
+        # In development, use socketio.run for WebSocket support
+        socketio.run(app, host='0.0.0.0', port=port, debug=not is_production)
