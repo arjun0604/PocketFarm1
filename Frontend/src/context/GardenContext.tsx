@@ -20,7 +20,7 @@ export const GardenProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const fetchUserCrops = async () => {
       if (user?.id) {
         try {
-          const response = await axios.get('http://127.0.0.1:5000/get_user_crops', {
+          const response = await axios.get('https://pocketfarm1.onrender.com/get_user_crops', {
             headers: {
               'Authorization': `Bearer ${user.id}`,
             },
@@ -32,7 +32,7 @@ export const GardenProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           // Create schedules for all crops
           for (const crop of crops) {
             try {
-              await axios.post('http://127.0.0.1:5000/user_schedule', {
+              await axios.post('https://pocketfarm1.onrender.com/user_schedule', {
                 user_id: Number(user.id),
                 crop_name: crop,
               });
@@ -59,7 +59,7 @@ export const GardenProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     try {
       // Add crop to garden
-      const response = await axios.post('http://127.0.0.1:5000/add_to_library', {
+      const response = await axios.post('https://pocketfarm1.onrender.com/add_to_library', {
         user_id: Number(user.id),
         crop_name: cropName,
       });
@@ -67,7 +67,7 @@ export const GardenProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (response.status === 200) {
         // Create schedule for the new crop
         try {
-          await axios.post('http://127.0.0.1:5000/user_schedule', {
+          await axios.post('https://pocketfarm1.onrender.com/user_schedule', {
             user_id: Number(user.id),
             crop_name: cropName,
           });
@@ -96,7 +96,7 @@ export const GardenProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     try {
       // Remove crop from garden
-      const response = await axios.post('http://127.0.0.1:5000/remove_from_garden', {
+      const response = await axios.post('https://pocketfarm1.onrender.com/remove_from_garden', {
         user_id: Number(user.id),
         crop_name: cropName,
       });
@@ -104,7 +104,7 @@ export const GardenProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (response.status === 200) {
         // Try to delete schedule for the removed crop, but don't fail if it doesn't exist
         try {
-          await axios.delete(`http://127.0.0.1:5000/user_schedule/${Number(user.id)}/${cropName}`);
+          await axios.delete(`https://pocketfarm1.onrender.com/user_schedule/${Number(user.id)}/${cropName}`);
         } catch (error: any) {
           // Only log the error if it's not a 404 (schedule not found)
           if (error.response?.status !== 404) {

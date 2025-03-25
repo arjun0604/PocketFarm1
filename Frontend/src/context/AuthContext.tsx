@@ -124,7 +124,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error('Please enter a valid email address');
       }
       
-      const response = await fetch('http://127.0.0.1:5000/login', {
+      const response = await fetch('https://pocketfarm1.onrender.com/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -170,7 +170,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
     
     try {
-      const response = await fetch('http://127.0.0.1:5000/delete_account', {
+      const response = await fetch('https://pocketfarm1.onrender.com/delete_account', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -219,7 +219,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error('Please enter a valid email address');
       }
       
-      const response = await fetch('http://127.0.0.1:5000/signup', {
+      const response = await fetch('https://pocketfarm1.onrender.com/signup', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -289,7 +289,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               console.log('Google sign-in successful, sending to backend...');
               
               // Send user data to our backend
-              const tokenResponse = await fetch('http://127.0.0.1:5000/google_auth', {
+              const tokenResponse = await fetch('https://pocketfarm1.onrender.com/google_auth', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',

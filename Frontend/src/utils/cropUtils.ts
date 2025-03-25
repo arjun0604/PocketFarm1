@@ -10,5 +10,5 @@ export * from './helpers/cropHelpers';
 // Determine the API base URL - used for consistency across all API calls
 export const getApiBaseUrl = () => {
   // Return the fixed base URL per requirements
-  return 'http://127.0.0.1:5000';
+  return 'https://pocketfarm1.onrender.com';
 };
