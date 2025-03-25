@@ -2,7 +2,7 @@
 
 // API URL Configuration - automatically switches between development and production
 const API_URLS = {
-  development: 'http://127.0.0.1:5000',
+  development: 'https://pocketfarm1.onrender.com',
   production: 'https://pocketfarm1.onrender.com'
 };
 

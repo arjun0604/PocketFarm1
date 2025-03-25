@@ -48,7 +48,7 @@ const UserProfile: React.FC = () => {
     const fetchCropDetails = async () => {
       try {
         const cropDetailsPromises = userCrops.map(async (cropName) => {
-          const response = await axios.get(`http://127.0.0.1:5000/crop/${encodeURIComponent(cropName)}`);
+          const response = await axios.get(`https://pocketfarm1.onrender.com/crop/${encodeURIComponent(cropName)}`);
           return response.data;
         });
 
@@ -59,7 +59,7 @@ const UserProfile: React.FC = () => {
         const completedCropsPromises = crops.map(async (crop) => {
           try {
             // Get all schedules for the user
-            const scheduleResponse = await axios.get(`http://127.0.0.1:5000/user_schedule/${user?.id}`);
+            const scheduleResponse = await axios.get(`https://pocketfarm1.onrender.com/user_schedule/${user?.id}`);
             const schedules = scheduleResponse.data;
             
             // Find the schedule for this crop

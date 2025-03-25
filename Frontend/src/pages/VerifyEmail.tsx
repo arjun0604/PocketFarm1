@@ -23,7 +23,7 @@ const VerifyEmail: React.FC = () => {
         }
 
         // Call the API to verify the email
-        const response = await fetch(`http://127.0.0.1:5000/verify-email?token=${token}&user_id=${userId}`, {
+        const response = await fetch(`https://pocketfarm1.onrender.com/verify-email?token=${token}&user_id=${userId}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',

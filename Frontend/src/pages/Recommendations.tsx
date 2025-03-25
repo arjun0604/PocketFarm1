@@ -48,7 +48,7 @@ const Recommendations: React.FC = () => {
     setShowForm(false);
     setWantCompanion(conditions.wantCompanion);
     try {
-      const response = await fetch('http://127.0.0.1:5000/recommend', {
+      const response = await fetch('https://pocketfarm1.onrender.com/recommend', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -98,7 +98,7 @@ const Recommendations: React.FC = () => {
         const companionDetails = await Promise.all(
           uniqueCompanionNames.map(async (name: string) => {
             try {
-              const response = await fetch(`http://127.0.0.1:5000/crop/${encodeURIComponent(name)}`);
+              const response = await fetch(`https://pocketfarm1.onrender.com/crop/${encodeURIComponent(name)}`);
               if (response.ok) {
                 const data = await response.json();
                 console.log(`Fetched companion crop details for ${name}:`, data); // Debug log
@@ -155,7 +155,7 @@ const Recommendations: React.FC = () => {
     queryFn: async () => {
       if (!user) return [];
       try {
-        const response = await axios.get(`http://127.0.0.1:5000/notifications/${Number(user.id)}`);
+        const response = await axios.get(`https://pocketfarm1.onrender.com/notifications/${Number(user.id)}`);
         return response.data;
       } catch (error) {
         console.error('Error fetching notifications:', error);

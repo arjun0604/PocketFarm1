@@ -53,7 +53,7 @@ const UserCrops: React.FC = () => {
     queryFn: async () => {
       if (!user) return [];
       try {
-        const response = await axios.get(`http://127.0.0.1:5000/user_schedule/${Number(user.id)}`);
+        const response = await axios.get(`https://pocketfarm1.onrender.com/user_schedule/${Number(user.id)}`);
         return response.data;
       } catch (error) {
         console.error('Error fetching schedules:', error);
@@ -69,7 +69,7 @@ const UserCrops: React.FC = () => {
     queryFn: async () => {
       if (!user) return [];
       try {
-        const response = await axios.get(`http://127.0.0.1:5000/notifications/${Number(user.id)}`);
+        const response = await axios.get(`https://pocketfarm1.onrender.com/notifications/${Number(user.id)}`);
         return response.data;
       } catch (error) {
         console.error('Error fetching notifications:', error);
@@ -82,7 +82,7 @@ const UserCrops: React.FC = () => {
   // Mutation for updating watering status
   const updateWateringMutation = useMutation({
     mutationFn: async ({ user_id, crop_name }: { user_id: number; crop_name: string }) => {
-      const response = await axios.post('http://127.0.0.1:5000/update_watering', {
+      const response = await axios.post('https://pocketfarm1.onrender.com/update_watering', {
         user_id,
         crop_name,
       });
@@ -113,7 +113,7 @@ const UserCrops: React.FC = () => {
       try {
         const cropDetails = await Promise.all(
           userCrops.map(async (cropName) => {
-            const response = await axios.get(`http://127.0.0.1:5000/crop/${encodeURIComponent(cropName)}`);
+            const response = await axios.get(`https://pocketfarm1.onrender.com/crop/${encodeURIComponent(cropName)}`);
             return response.data;
           })
         );
