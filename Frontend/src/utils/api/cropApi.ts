@@ -1,8 +1,9 @@
 import { Crop, GrowingConditions } from '../types/cropTypes';
 import { mockCrops } from '../data/mockData';
+import config from '../../config';
 
-// Base URL constant for API calls
-const API_BASE_URL = 'http://127.0.0.1:5000';
+// Base URL constant for API calls now from config
+const API_BASE_URL = config.API_BASE_URL;
 
 export const fetchRecommendedCrops = async (conditions: GrowingConditions): Promise<Crop[]> => {
   console.log('Fetching recommendations with:', conditions);
@@ -23,6 +24,8 @@ export const fetchRecommendedCrops = async (conditions: GrowingConditions): Prom
         avg_area: conditions.area,
         include_companions: conditions.wantCompanion,
       }),
+      // Add credentials for cookie-based authentication if needed
+      credentials: 'include',
     });
 
     console.log('Response status:', response.status); // Log the response status
@@ -60,18 +63,23 @@ export const fetchRecommendedCrops = async (conditions: GrowingConditions): Prom
   } catch (error) {
     console.error('Error fetching crop recommendations:', error);
     
-    // Fallback to mock data if the API call fails (for development)
-    return mockCrops.filter(crop => {
-      if (conditions.sunlight && crop.sunlight !== conditions.sunlight) {
-        return false;
-      }
-      
-      if (conditions.waterNeeds && crop.waterNeeds !== conditions.waterNeeds) {
-        return false;
-      }
-      
-      return true;
-    });
+    // Fallback to mock data if the API call fails and we're configured to use mock data
+    if (config.useMockDataOnFailure) {
+      return mockCrops.filter(crop => {
+        if (conditions.sunlight && crop.sunlight !== conditions.sunlight) {
+          return false;
+        }
+        
+        if (conditions.waterNeeds && crop.waterNeeds !== conditions.waterNeeds) {
+          return false;
+        }
+        
+        return true;
+      });
+    }
+    
+    // Otherwise return an empty array
+    return [];
   }
 };
 
@@ -87,6 +95,7 @@ export const fetchCropByName = async (cropName: string): Promise<Crop | null> =>
       headers: {
         'Content-Type': 'application/json',
       },
+      credentials: 'include', // Add credentials for cookie-based authentication if needed
     });
 
     if (!response.ok) {
@@ -120,11 +129,15 @@ export const fetchCropByName = async (cropName: string): Promise<Crop | null> =>
   } catch (error) {
     console.error('Error fetching crop details:', error);
     
-    // Fallback to mock data if the API call fails
-    const foundCrop = mockCrops.find(
-      crop => crop.name.toLowerCase() === cropName.toLowerCase()
-    );
+    // Fallback to mock data if the API call fails and we're configured to use mock data
+    if (config.useMockDataOnFailure) {
+      const foundCrop = mockCrops.find(
+        crop => crop.name.toLowerCase() === cropName.toLowerCase()
+      );
+      return foundCrop || null;
+    }
     
-    return foundCrop || null;
+    // Otherwise return null
+    return null;
   }
 };

@@ -1,9 +1,10 @@
 import { Nursery } from '../types/cropTypes';
 import { mockNurseries } from '../data/mockData';
 import { getDistance } from '../locationUtils';
+import config from '../../config';
 
-// Base URL constant for API calls
-const API_BASE_URL = 'http://127.0.0.1:5000';
+// Base URL constant for API calls now from config
+const API_BASE_URL = config.API_BASE_URL;
 
 // Fetch nearby nurseries using Overpass API
 export const fetchNearbyNurseries = async (latitude: number, longitude: number): Promise<Nursery[]> => {
@@ -24,6 +25,7 @@ export const fetchNearbyNurseries = async (latitude: number, longitude: number):
           latitude,
           longitude,
         }),
+        credentials: 'include', // Add credentials for cookie-based authentication if needed
       });
 
       if (!response.ok) {
@@ -62,12 +64,17 @@ export const fetchNearbyNurseries = async (latitude: number, longitude: number):
   } catch (error) {
     console.error('All nursery API calls failed:', error);
     
-    // Final fallback to mock data
-    console.log('Using mock nursery data as last resort');
-    return [...mockNurseries].map(nursery => {
-      const distance = getDistance(latitude, longitude, nursery.latitude, nursery.longitude);
-      return { ...nursery, distance: parseFloat(distance.toFixed(1)) };
-    }).sort((a, b) => a.distance - b.distance);
+    // Final fallback to mock data if configured to use mock data
+    if (config.useMockDataOnFailure) {
+      console.log('Using mock nursery data as fallback');
+      return [...mockNurseries].map(nursery => {
+        const distance = getDistance(latitude, longitude, nursery.latitude, nursery.longitude);
+        return { ...nursery, distance: parseFloat(distance.toFixed(1)) };
+      }).sort((a, b) => a.distance - b.distance);
+    }
+    
+    // Otherwise return an empty array
+    return [];
   }
 };
 

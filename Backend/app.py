@@ -7,6 +7,7 @@ from flask_socketio import SocketIO, join_room, emit
 import time
 import threading
 import os
+import sys
 from functools import lru_cache
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -16,7 +17,6 @@ import math
 import logging
 import traceback
 import random
-import sys
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 import uuid
@@ -24,7 +24,55 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import yagmail
-from database_config import get_db, get_cursor
+
+# Add the directory containing this file to Python path to ensure imports work
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+# Import database functions
+try:
+    from database_config import get_db, get_cursor
+except ModuleNotFoundError:
+    # If the import fails, define the functions here as fallback
+    def get_db():
+        """Get a database connection based on environment."""
+        is_production = os.getenv("ENVIRONMENT", "development") == "production"
+        db_url = os.getenv("DATABASE_URL")
+        
+        if is_production and db_url and db_url.startswith('postgres'):
+            # PostgreSQL connection (for production on Render)
+            try:
+                # Connect to PostgreSQL
+                import psycopg2
+                from psycopg2.extras import RealDictCursor
+                conn = psycopg2.connect(db_url)
+                conn.autocommit = False
+                return conn
+            except Exception as e:
+                print(f"PostgreSQL connection error: {str(e)}")
+                raise
+        else:
+            # SQLite connection (for development)
+            try:
+                db_path = os.getenv("DATABASE_URL", "PocketFarm.db")
+                conn = sqlite3.connect(db_path, timeout=30)
+                conn.row_factory = sqlite3.Row
+                # Enable WAL mode for better concurrency
+                conn.execute('PRAGMA journal_mode=WAL')
+                # Set busy timeout
+                conn.execute('PRAGMA busy_timeout=30000')
+                return conn
+            except sqlite3.Error as e:
+                print(f"SQLite connection error: {str(e)}")
+                raise
+
+    def get_cursor(conn):
+        """Get an appropriate cursor based on connection type."""
+        if isinstance(conn, psycopg2.extensions.connection):
+            from psycopg2.extras import RealDictCursor
+            return conn.cursor(cursor_factory=RealDictCursor)
+        return conn.cursor()
 
 # Load environment variables
 load_dotenv()
